@@ -26,3 +26,6 @@ build:
 dev_build:
   build_kit:
     name: rust
+    build_additions:
+      - ide: vscode_server_rust
+      - ssh: ssh_server
