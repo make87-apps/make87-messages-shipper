@@ -24,7 +24,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
 
     let subscriber = session
-        .declare_subscriber("*/*/make87_messages-$*/*?")
+        .declare_subscriber("*/*/make87_messages-$*/**")
         .callback(move |sample| {
             log::info!("Received sample. Topic: {}", sample.key_expr());
             // let message_decoded = message_encoder.decode(&sample.payload().to_bytes());
