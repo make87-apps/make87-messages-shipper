@@ -47,7 +47,5 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         }
     }
 
-    make87::run_forever();
-
     Ok(())
 }
