@@ -33,21 +33,19 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         rerun::default_flush_timeout(),
     )?;
 
-    session
-        .declare_subscriber(&subscriber_config.config.topic_key)
-        .callback(move |sample| {
-            log::info!("Received sample. Topic: {}", sample.key_expr());
-            let message_decoded = message_encoder.decode(&sample.payload().to_bytes());
-            match message_decoded {
-                Ok(msg) => {
-                    log::info!("Received message: {:?}", msg);
-                    rec.log("/any_message", &rerun::TextDocument::new(msg.body))
-                        .unwrap();
-                }
-                Err(e) => log::error!("Decode error: {}", e),
+    let subscriber = session.declare_subscriber(&subscriber_config.config.topic_key).await?;
+    while let Ok(sample) = subscriber.recv_async().await {
+        log::info!("Received sample. Topic: {}", sample.key_expr());
+        let message_decoded = message_encoder.decode(&sample.payload().to_bytes());
+        match message_decoded {
+            Ok(msg) => {
+                log::info!("Received message: {:?}", msg);
+                rec.log("/any_message", &rerun::TextDocument::new(format!("{:?}: {}",msg.header.unwrap().timestamp.unwrap(),msg.body)))
+                    .unwrap();
             }
-        })
-        .await?;
+            Err(e) => log::error!("Decode error: {}", e),
+        }
+    }
 
     make87::run_forever();
 
