@@ -7,26 +7,32 @@ use make87_messages::text::PlainText;
 use regex::Regex;
 use std::collections::HashMap;
 use std::error::Error;
+use std::time::{SystemTime, UNIX_EPOCH};
 use ndarray::ShapeBuilder as _;
 
-fn timestamp_to_ns(ts: &Timestamp) -> i64 {
-    ts.seconds
-        .saturating_mul(1_000_000_000)
-        .saturating_add(ts.nanos as i64)
+fn timestamp_to_secs_f64(ts: &Timestamp) -> f64 {
+    ts.seconds as f64 + (ts.nanos as f64 / 1_000_000_000.0)
 }
 
-fn process_header_and_set_time(header: &Option<Header>, rec: &rerun::RecordingStream) -> (String, i64) {
+fn get_current_timestamp_secs() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64()
+}
+
+fn process_header_and_set_time(header: &Option<Header>, rec: &rerun::RecordingStream) -> (String, f64) {
     let (entity_path, header_time) = match header {
         Some(header) => {
             let time = header.timestamp
-                .map(|ts| timestamp_to_ns(&ts))
-                .unwrap_or(0);
+                .map(|ts| timestamp_to_secs_f64(&ts))
+                .unwrap_or_else(get_current_timestamp_secs);
             (header.entity_path.clone(), time)
         }
-        None => ("/".to_string(), 0),
+        None => ("/".to_string(), get_current_timestamp_secs()),
     };
 
-    rec.set_time_sequence("header_time", header_time);
+    rec.set_timestamp_secs_since_epoch("header_time", header_time);
     (entity_path, header_time)
 }
 
