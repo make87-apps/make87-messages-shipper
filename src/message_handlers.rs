@@ -113,20 +113,16 @@ impl<'a> ImageFormatHandler for Yuv420Handler<'a> {
         let width = self.data.width as usize;
         let height = self.data.height as usize;
 
-        // Convert YUV420 to RGB using yuvutils-rs
+        // Convert YUV420 to RGB
         let rgb_data = yuv420_to_rgb_with_yuvutils(&self.data.data, width, height)?;
 
-        log::debug!("Creating ndarray for {}x{} image with {} RGB bytes", width, height, rgb_data.len());
-
-        // Create ndarray from converted RGB bytes with explicit row-major (C-order) layout
-        // The RGB data is in row-major format: RGBRGBRGB... for each row
+        // Create ndarray with explicit strides for proper HWC layout
         let image_array = ndarray::Array::from_shape_vec(
-            (height, width, 3).strides((width * 3, 3, 1)), // Explicit strides for HWC layout
+            (height, width, 3).strides((width * 3, 3, 1)),
             rgb_data
         ).map_err(|e| format!("Failed to create ndarray: {:?}", e))?;
 
         let image = rerun::Image::from_color_model_and_tensor(rerun::ColorModel::RGB, image_array)?;
-        log::debug!("Successfully created rerun::Image, logging to entity: {}", entity_path);
         rec.log(entity_path, &image)?;
         Ok(())
     }
@@ -136,14 +132,11 @@ impl<'a> ImageFormatHandler for Yuv420Handler<'a> {
     }
 }
 
-// YUV420 to RGB conversion using yuvutils-rs v0.8
+// YUV420 to RGB conversion using yuvutils-rs
 fn yuv420_to_rgb_with_yuvutils(yuv_data: &[u8], width: usize, height: usize) -> Result<Vec<u8>, Box<dyn Error>> {
     let y_size = width * height;
-    let uv_size = y_size / 4;  // Each U and V plane is width/2 * height/2
+    let uv_size = y_size / 4;
     let expected_total_size = y_size + 2 * uv_size;
-
-    log::debug!("YUV420 conversion: {}x{}, Y_size={}, UV_size={}, expected_total={}, actual_data_len={}",
-                width, height, y_size, uv_size, expected_total_size, yuv_data.len());
 
     if yuv_data.len() < expected_total_size {
         return Err(format!("Insufficient YUV420 data: expected {}, got {}", expected_total_size, yuv_data.len()).into());
@@ -153,76 +146,29 @@ fn yuv420_to_rgb_with_yuvutils(yuv_data: &[u8], width: usize, height: usize) -> 
     let u_plane = &yuv_data[y_size..y_size + uv_size];
     let v_plane = &yuv_data[y_size + uv_size..y_size + 2 * uv_size];
 
-    // Log some sample values for debugging
-    if !y_plane.is_empty() && !u_plane.is_empty() && !v_plane.is_empty() {
-        log::debug!("Sample YUV values: Y[0]={}, U[0]={}, V[0]={}", y_plane[0], u_plane[0], v_plane[0]);
-        // Log a few more samples for better debugging
-        let mid_y = y_size / 2;
-        let mid_uv = uv_size / 2;
-        log::debug!("Mid YUV values: Y[{}]={}, U[{}]={}, V[{}]={}",
-                   mid_y, y_plane[mid_y], mid_uv, u_plane[mid_uv], mid_uv, v_plane[mid_uv]);
-    }
-
-    // Create YuvPlanarImage structure with correct strides for packed data
-    // Since your encoder packs the data without padding, stride equals actual width
     let yuv_planar = yuvutils_rs::YuvPlanarImage {
         y_plane,
-        y_stride: width as u32,  // Y plane stride = width (no padding)
+        y_stride: width as u32,
         u_plane,
-        u_stride: (width / 2) as u32,  // U plane stride = width/2 (no padding)
+        u_stride: (width / 2) as u32,
         v_plane,
-        v_stride: (width / 2) as u32,  // V plane stride = width/2 (no padding)
+        v_stride: (width / 2) as u32,
         width: width as u32,
         height: height as u32,
     };
 
     let mut rgb_data = vec![0u8; width * height * 3];
 
-    // Try multiple combinations of color space parameters
-    let conversion_attempts = [
-        // Most common modern settings
-        (yuvutils_rs::YuvRange::Limited, yuvutils_rs::YuvStandardMatrix::Bt709),
-        // Traditional broadcast settings
-        (yuvutils_rs::YuvRange::Limited, yuvutils_rs::YuvStandardMatrix::Bt601),
-        // Full range modern
-        (yuvutils_rs::YuvRange::Full, yuvutils_rs::YuvStandardMatrix::Bt709),
-        // Full range traditional
-        (yuvutils_rs::YuvRange::Full, yuvutils_rs::YuvStandardMatrix::Bt601),
-    ];
+    // Use Limited range with Bt709 matrix (most common for modern video)
+    yuvutils_rs::yuv420_to_rgb(
+        &yuv_planar,
+        &mut rgb_data,
+        width as u32 * 3,
+        yuvutils_rs::YuvRange::Limited,
+        yuvutils_rs::YuvStandardMatrix::Bt709,
+    ).map_err(|e| format!("YUV420 to RGB conversion failed: {:?}", e))?;
 
-    for (i, (range, matrix)) in conversion_attempts.iter().enumerate() {
-        let result = yuvutils_rs::yuv420_to_rgb(
-            &yuv_planar,
-            &mut rgb_data,
-            width as u32 * 3, // RGB stride
-            *range,
-            *matrix,
-        );
-
-        match result {
-            Ok(_) => {
-                log::debug!("YUV420 to RGB conversion successful with {:?} range, {:?} matrix (attempt {})",
-                           range, matrix, i + 1);
-
-                // Log some sample RGB values for debugging
-                if rgb_data.len() >= 6 {
-                    log::debug!("Sample RGB values: R[0]={}, G[0]={}, B[0]={}",
-                               rgb_data[0], rgb_data[1], rgb_data[2]);
-                    let mid = (rgb_data.len() / 2) & !2; // Ensure even index for RGB alignment
-                    log::debug!("Mid RGB values: R[{}]={}, G[{}]={}, B[{}]={}",
-                               mid/3, rgb_data[mid], mid/3, rgb_data[mid+1], mid/3, rgb_data[mid+2]);
-                }
-
-                return Ok(rgb_data);
-            }
-            Err(e) => {
-                log::debug!("YUV420 conversion attempt {} failed with {:?} range, {:?} matrix: {:?}",
-                           i + 1, range, matrix, e);
-            }
-        }
-    }
-
-    Err("YUV conversion failed with all parameter combinations".into())
+    Ok(rgb_data)
 }
 
 struct Rgb888Handler<'a> {
@@ -234,11 +180,11 @@ impl<'a> ImageFormatHandler for Rgb888Handler<'a> {
         let width = self.data.width as usize;
         let height = self.data.height as usize;
 
-        // Create ndarray from raw RGB bytes
+        // Create ndarray with explicit strides for proper HWC layout
         let image_array = ndarray::Array::from_shape_vec(
-            (height, width, 3).f(),
+            (height, width, 3).strides((width * 3, 3, 1)),
             self.data.data.clone()
-        )?;
+        ).map_err(|e| format!("Failed to create ndarray: {:?}", e))?;
 
         let image = rerun::Image::from_color_model_and_tensor(rerun::ColorModel::RGB, image_array)?;
         rec.log(entity_path, &image)?;
@@ -259,11 +205,11 @@ impl<'a> ImageFormatHandler for Rgba8888Handler<'a> {
         let width = self.data.width as usize;
         let height = self.data.height as usize;
 
-        // Create ndarray from raw RGB bytes
+        // Create ndarray with explicit strides for proper HWCA layout
         let image_array = ndarray::Array::from_shape_vec(
-            (height, width, 4).f(),
+            (height, width, 4).strides((width * 4, 4, 1)),
             self.data.data.clone()
-        )?;
+        ).map_err(|e| format!("Failed to create ndarray: {:?}", e))?;
 
         let image = rerun::Image::from_color_model_and_tensor(rerun::ColorModel::RGBA, image_array)?;
         rec.log(entity_path, &image)?;
