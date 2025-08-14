@@ -152,6 +152,11 @@ fn yuv420_to_rgb_with_yuvutils(yuv_data: &[u8], width: usize, height: usize) -> 
     // Log some sample values for debugging
     if !y_plane.is_empty() && !u_plane.is_empty() && !v_plane.is_empty() {
         log::debug!("Sample YUV values: Y[0]={}, U[0]={}, V[0]={}", y_plane[0], u_plane[0], v_plane[0]);
+        // Log a few more samples for better debugging
+        let mid_y = y_size / 2;
+        let mid_uv = uv_size / 2;
+        log::debug!("Mid YUV values: Y[{}]={}, U[{}]={}, V[{}]={}",
+                   mid_y, y_plane[mid_y], mid_uv, u_plane[mid_uv], mid_uv, v_plane[mid_uv]);
     }
 
     // Create YuvPlanarImage structure with correct strides for packed data
@@ -169,43 +174,51 @@ fn yuv420_to_rgb_with_yuvutils(yuv_data: &[u8], width: usize, height: usize) -> 
 
     let mut rgb_data = vec![0u8; width * height * 3];
 
-    // Try full range first (more common with modern video)
-    let conversion_result = yuvutils_rs::yuv420_to_rgb(
-        &yuv_planar,
-        &mut rgb_data,
-        width as u32 * 3, // RGB stride
-        yuvutils_rs::YuvRange::Full,  // Changed from Limited to Full
-        yuvutils_rs::YuvStandardMatrix::Bt709,  // Changed from Bt601 to Bt709 (more common for HD video)
-    );
+    // Try multiple combinations of color space parameters
+    let conversion_attempts = [
+        // Most common modern settings
+        (yuvutils_rs::YuvRange::Limited, yuvutils_rs::YuvStandardMatrix::Bt709),
+        // Traditional broadcast settings
+        (yuvutils_rs::YuvRange::Limited, yuvutils_rs::YuvStandardMatrix::Bt601),
+        // Full range modern
+        (yuvutils_rs::YuvRange::Full, yuvutils_rs::YuvStandardMatrix::Bt709),
+        // Full range traditional
+        (yuvutils_rs::YuvRange::Full, yuvutils_rs::YuvStandardMatrix::Bt601),
+    ];
 
-    match conversion_result {
-        Ok(_) => {
-            log::debug!("YUV420 to RGB conversion successful with Full range, Bt709");
-            Ok(rgb_data)
-        }
-        Err(e) => {
-            log::warn!("YUV420 conversion failed with Full/Bt709, trying Limited/Bt601: {:?}", e);
+    for (i, (range, matrix)) in conversion_attempts.iter().enumerate() {
+        let result = yuvutils_rs::yuv420_to_rgb(
+            &yuv_planar,
+            &mut rgb_data,
+            width as u32 * 3, // RGB stride
+            *range,
+            *matrix,
+        );
 
-            // Fallback to limited range Bt601
-            let fallback_result = yuvutils_rs::yuv420_to_rgb(
-                &yuv_planar,
-                &mut rgb_data,
-                width as u32 * 3,
-                yuvutils_rs::YuvRange::Limited,
-                yuvutils_rs::YuvStandardMatrix::Bt601,
-            );
+        match result {
+            Ok(_) => {
+                log::debug!("YUV420 to RGB conversion successful with {:?} range, {:?} matrix (attempt {})",
+                           range, matrix, i + 1);
 
-            match fallback_result {
-                Ok(_) => {
-                    log::debug!("YUV420 to RGB conversion successful with Limited range, Bt601");
-                    Ok(rgb_data)
+                // Log some sample RGB values for debugging
+                if rgb_data.len() >= 6 {
+                    log::debug!("Sample RGB values: R[0]={}, G[0]={}, B[0]={}",
+                               rgb_data[0], rgb_data[1], rgb_data[2]);
+                    let mid = (rgb_data.len() / 2) & !2; // Ensure even index for RGB alignment
+                    log::debug!("Mid RGB values: R[{}]={}, G[{}]={}, B[{}]={}",
+                               mid/3, rgb_data[mid], mid/3, rgb_data[mid+1], mid/3, rgb_data[mid+2]);
                 }
-                Err(fallback_e) => {
-                    Err(format!("YUV conversion failed with both parameter sets. Full/Bt709: {:?}, Limited/Bt601: {:?}", e, fallback_e).into())
-                }
+
+                return Ok(rgb_data);
+            }
+            Err(e) => {
+                log::debug!("YUV420 conversion attempt {} failed with {:?} range, {:?} matrix: {:?}",
+                           i + 1, range, matrix, e);
             }
         }
     }
+
+    Err("YUV conversion failed with all parameter combinations".into())
 }
 
 struct Rgb888Handler<'a> {
