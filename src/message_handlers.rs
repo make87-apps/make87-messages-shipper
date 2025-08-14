@@ -1,13 +1,13 @@
 use make87::encodings::{Encoder, ProtobufEncoder};
-use make87_messages::text::PlainText;
 use make87_messages::core::Header;
-use std::error::Error;
 use make87_messages::google::protobuf::Timestamp;
-use rerun::{EncodedImage, MediaType, RecordingStream, TextDocument};
-use zenoh::sample::Sample;
-use std::collections::HashMap;
 use make87_messages::image::compressed::ImageJpeg;
+use make87_messages::image::uncompressed::{image_raw_any, ImageRawAny, ImageRgb888, ImageRgba8888, ImageYuv420};
+use make87_messages::text::PlainText;
 use regex::Regex;
+use std::collections::HashMap;
+use std::error::Error;
+use ndarray::ShapeBuilder as _;
 
 fn timestamp_to_ns(ts: &Timestamp) -> i64 {
     ts.seconds
@@ -15,13 +15,13 @@ fn timestamp_to_ns(ts: &Timestamp) -> i64 {
         .saturating_add(ts.nanos as i64)
 }
 
-fn process_header_and_set_time(header: Option<Header>, rec: &RecordingStream) -> (String, i64) {
+fn process_header_and_set_time(header: &Option<Header>, rec: &rerun::RecordingStream) -> (String, i64) {
     let (entity_path, header_time) = match header {
         Some(header) => {
             let time = header.timestamp
                 .map(|ts| timestamp_to_ns(&ts))
                 .unwrap_or(0);
-            (header.entity_path, time)
+            (header.entity_path.clone(), time)
         }
         None => ("/".to_string(), 0),
     };
@@ -31,7 +31,7 @@ fn process_header_and_set_time(header: Option<Header>, rec: &RecordingStream) ->
 }
 
 pub trait MessageHandler {
-    fn handle_message(&self, sample: &Sample, rec: &RecordingStream) -> Result<(), Box<dyn Error>>;
+    fn handle_message(&self, sample: &zenoh::sample::Sample, rec: &rerun::RecordingStream) -> Result<(), Box<dyn Error>>;
 }
 
 pub struct TextPlainTextHandler {
@@ -47,13 +47,13 @@ impl TextPlainTextHandler {
 }
 
 impl MessageHandler for TextPlainTextHandler {
-    fn handle_message(&self, sample: &Sample, rec: &RecordingStream) -> Result<(), Box<dyn Error>> {
+    fn handle_message(&self, sample: &zenoh::sample::Sample, rec: &rerun::RecordingStream) -> Result<(), Box<dyn Error>> {
         let message_decoded = self.encoder.decode(&sample.payload().to_bytes())?;
-        let (entity_path, _header_time) = process_header_and_set_time(message_decoded.header, rec);
+        let (entity_path, _header_time) = process_header_and_set_time(&message_decoded.header, rec);
 
         rec.log(
             entity_path,
-            &TextDocument::new(message_decoded.body)
+            &rerun::TextDocument::new(message_decoded.body)
         )?;
         Ok(())
     }
@@ -72,16 +72,267 @@ impl ImageCompressedJpegHandler {
 }
 
 impl MessageHandler for ImageCompressedJpegHandler {
-    fn handle_message(&self, sample: &Sample, rec: &RecordingStream) -> Result<(), Box<dyn Error>> {
+    fn handle_message(&self, sample: &zenoh::sample::Sample, rec: &rerun::RecordingStream) -> Result<(), Box<dyn Error>> {
         let message_decoded = self.encoder.decode(&sample.payload().to_bytes())?;
-        let (entity_path, _header_time) = process_header_and_set_time(message_decoded.header, rec);
+        let (entity_path, _header_time) = process_header_and_set_time(&message_decoded.header, rec);
         rec.log(
             entity_path,
-            &EncodedImage::new(message_decoded.data).with_media_type(MediaType::from("image/jpeg"))
+            &rerun::EncodedImage::new(message_decoded.data).with_media_type(rerun::MediaType::from("image/jpeg"))
         )?;
         Ok(())
     }
 }
+
+// Trait for handling different image formats
+trait ImageFormatHandler {
+    fn log_to_rerun(&self, entity_path: String, rec: &rerun::RecordingStream) -> Result<(), Box<dyn Error>>;
+    fn get_format_name(&self) -> &'static str;
+}
+
+// Individual format handlers
+struct Yuv420Handler<'a> {
+    data: &'a ImageYuv420,
+}
+
+impl<'a> ImageFormatHandler for Yuv420Handler<'a> {
+    fn log_to_rerun(&self, entity_path: String, rec: &rerun::RecordingStream) -> Result<(), Box<dyn Error>> {
+        let width = self.data.width as usize;
+        let height = self.data.height as usize;
+
+        // Convert YUV420 to RGB using yuvutils-rs
+        let rgb_data = yuv420_to_rgb_with_yuvutils(&self.data.data, width, height)?;
+
+        // Create ndarray from converted RGB bytes
+        let image_array = ndarray::Array::from_shape_vec(
+            (height, width, 3).f(),
+            rgb_data
+        )?;
+
+        let image = rerun::Image::from_color_model_and_tensor(rerun::ColorModel::RGB, image_array)?;
+        rec.log(entity_path, &image)?;
+        Ok(())
+    }
+
+    fn get_format_name(&self) -> &'static str {
+        "YUV420"
+    }
+}
+
+// YUV420 to RGB conversion using yuvutils-rs v0.8
+fn yuv420_to_rgb_with_yuvutils(yuv_data: &[u8], width: usize, height: usize) -> Result<Vec<u8>, Box<dyn Error>> {
+    let y_size = width * height;
+    let uv_size = y_size / 4;
+
+    if yuv_data.len() < y_size + 2 * uv_size {
+        return Err("Insufficient YUV420 data".into());
+    }
+
+    let y_plane = &yuv_data[0..y_size];
+    let u_plane = &yuv_data[y_size..y_size + uv_size];
+    let v_plane = &yuv_data[y_size + uv_size..y_size + 2 * uv_size];
+
+    // Create YuvPlanarImage structure
+    let yuv_planar = yuvutils_rs::YuvPlanarImage {
+        y_plane,
+        y_stride: width as u32,
+        u_plane,
+        u_stride: (width / 2) as u32,
+        v_plane,
+        v_stride: (width / 2) as u32,
+        width: width as u32,
+        height: height as u32,
+    };
+
+    let mut rgb_data = vec![0u8; width * height * 3];
+
+    yuvutils_rs::yuv420_to_rgb(
+        &yuv_planar,
+        &mut rgb_data,
+        width as u32 * 3, // RGB stride
+        yuvutils_rs::YuvRange::Limited,
+        yuvutils_rs::YuvStandardMatrix::Bt601,
+    ).map_err(|e| format!("YUV conversion error: {:?}", e))?;
+
+    Ok(rgb_data)
+}
+
+struct Rgb888Handler<'a> {
+    data: &'a ImageRgb888,
+}
+
+impl<'a> ImageFormatHandler for Rgb888Handler<'a> {
+    fn log_to_rerun(&self, entity_path: String, rec: &rerun::RecordingStream) -> Result<(), Box<dyn Error>> {
+        let width = self.data.width as usize;
+        let height = self.data.height as usize;
+
+        // Create ndarray from raw RGB bytes
+        let image_array = ndarray::Array::from_shape_vec(
+            (height, width, 3).f(),
+            self.data.data.clone()
+        )?;
+
+        let image = rerun::Image::from_color_model_and_tensor(rerun::ColorModel::RGB, image_array)?;
+        rec.log(entity_path, &image)?;
+        Ok(())
+    }
+
+    fn get_format_name(&self) -> &'static str {
+        "RGB888"
+    }
+}
+
+struct Rgba8888Handler<'a> {
+    data: &'a ImageRgba8888,
+}
+
+impl<'a> ImageFormatHandler for Rgba8888Handler<'a> {
+    fn log_to_rerun(&self, entity_path: String, rec: &rerun::RecordingStream) -> Result<(), Box<dyn Error>> {
+        let width = self.data.width as usize;
+        let height = self.data.height as usize;
+
+        // Create ndarray from raw RGB bytes
+        let image_array = ndarray::Array::from_shape_vec(
+            (height, width, 4).f(),
+            self.data.data.clone()
+        )?;
+
+        let image = rerun::Image::from_color_model_and_tensor(rerun::ColorModel::RGBA, image_array)?;
+        rec.log(entity_path, &image)?;
+        Ok(())
+    }
+
+    fn get_format_name(&self) -> &'static str {
+        "RGBA8888"
+    }
+}
+
+// Helper function to handle any image format
+fn handle_image_format(handler: &dyn ImageFormatHandler, entity_path: String, rec: &rerun::RecordingStream) -> Result<(), Box<dyn Error>> {
+    log::info!("Processing {} image", handler.get_format_name());
+    handler.log_to_rerun(entity_path, rec)
+}
+
+// Handler for composite ImageRawAny messages
+pub struct ImageRawAnyHandler {
+    encoder: ProtobufEncoder<ImageRawAny>,
+}
+
+impl ImageRawAnyHandler {
+    pub fn new() -> Self {
+        Self {
+            encoder: ProtobufEncoder::<ImageRawAny>::new(),
+        }
+    }
+}
+
+impl MessageHandler for ImageRawAnyHandler {
+    fn handle_message(&self, sample: &zenoh::sample::Sample, rec: &rerun::RecordingStream) -> Result<(), Box<dyn Error>> {
+        let message_decoded = self.encoder.decode(&sample.payload().to_bytes())?;
+        let (entity_path, _header_time) = process_header_and_set_time(&message_decoded.header, rec);
+
+        // Handle the one-of field properly
+        match &message_decoded.image {
+            Some(image_raw_any::Image::Rgb888(rgb888)) => {
+                let handler = Rgb888Handler { data: rgb888 };
+                handle_image_format(&handler, entity_path, rec)?;
+            }
+            Some(image_raw_any::Image::Rgba8888(rgba8888)) => {
+                let handler = Rgba8888Handler { data: rgba8888 };
+                handle_image_format(&handler, entity_path, rec)?;
+            }
+            Some(image_raw_any::Image::Yuv420(yuv420)) => {
+                let handler = Yuv420Handler { data: yuv420 };
+                handle_image_format(&handler, entity_path, rec)?;
+            }
+            Some(image_raw_any::Image::Yuv422(_yuv422)) => {
+                // TODO: Add YUV422 handler
+                log::warn!("YUV422 format not yet implemented");
+            }
+            Some(image_raw_any::Image::Yuv444(_yuv444)) => {
+                // TODO: Add YUV444 handler
+                log::warn!("YUV444 format not yet implemented");
+            }
+            Some(image_raw_any::Image::Nv12(_nv12)) => {
+                // TODO: Add NV12 handler
+                log::warn!("NV12 format not yet implemented");
+            }
+            None => {
+                return Err("No image format found in ImageRawAny message".into());
+            }
+        }
+
+        Ok(())
+    }
+}
+
+// Individual format message handlers (for when you receive specific formats directly)
+pub struct ImageYuv420Handler {
+    encoder: ProtobufEncoder<ImageYuv420>,
+}
+
+impl ImageYuv420Handler {
+    pub fn new() -> Self {
+        Self {
+            encoder: ProtobufEncoder::<ImageYuv420>::new(),
+        }
+    }
+}
+
+impl MessageHandler for ImageYuv420Handler {
+    fn handle_message(&self, sample: &zenoh::sample::Sample, rec: &rerun::RecordingStream) -> Result<(), Box<dyn Error>> {
+        let message_decoded = self.encoder.decode(&sample.payload().to_bytes())?;
+        let (entity_path, _header_time) = process_header_and_set_time(&message_decoded.header, rec);
+
+        let handler = Yuv420Handler { data: &message_decoded };
+        handle_image_format(&handler, entity_path, rec)
+    }
+}
+
+pub struct ImageRgb888Handler {
+    encoder: ProtobufEncoder<ImageRgb888>,
+}
+
+impl ImageRgb888Handler {
+    pub fn new() -> Self {
+        Self {
+            encoder: ProtobufEncoder::<ImageRgb888>::new(),
+        }
+    }
+}
+
+impl MessageHandler for ImageRgb888Handler {
+    fn handle_message(&self, sample: &zenoh::sample::Sample, rec: &rerun::RecordingStream) -> Result<(), Box<dyn Error>> {
+        let message_decoded = self.encoder.decode(&sample.payload().to_bytes())?;
+        let (entity_path, _header_time) = process_header_and_set_time(&message_decoded.header, rec);
+
+        let handler = Rgb888Handler { data: &message_decoded };
+        handle_image_format(&handler, entity_path, rec)
+    }
+}
+
+
+pub struct ImageRgba8888Handler {
+    encoder: ProtobufEncoder<ImageRgba8888>,
+}
+
+impl ImageRgba8888Handler {
+    pub fn new() -> Self {
+        Self {
+            encoder: ProtobufEncoder::<ImageRgba8888>::new(),
+        }
+    }
+}
+
+impl MessageHandler for ImageRgba8888Handler {
+    fn handle_message(&self, sample: &zenoh::sample::Sample, rec: &rerun::RecordingStream) -> Result<(), Box<dyn Error>> {
+        let message_decoded = self.encoder.decode(&sample.payload().to_bytes())?;
+        let (entity_path, _header_time) = process_header_and_set_time(&message_decoded.header, rec);
+
+        let handler = Rgba8888Handler { data: &message_decoded };
+        handle_image_format(&handler, entity_path, rec)
+    }
+}
+
 
 type HandlerFactory = fn() -> Box<dyn MessageHandler>;
 
@@ -98,6 +349,12 @@ impl MessageTypeRegistry {
         // Register message types with their corresponding handlers
         registry.register("text-PlainText", || Box::new(TextPlainTextHandler::new()));
         registry.register("image-compressed-ImageJPEG", || Box::new(ImageCompressedJpegHandler::new()));
+
+        // Register composite and individual image format handlers
+        registry.register("image-uncompressed-ImageRawAny", || Box::new(ImageRawAnyHandler::new()));
+        registry.register("image-uncompressed-ImageYUV420", || Box::new(ImageYuv420Handler::new()));
+        registry.register("image-uncompressed-ImageRGB888", || Box::new(ImageRgb888Handler::new()));
+        registry.register("image-uncompressed-ImageRGBA8888", || Box::new(ImageRgba8888Handler::new()));
 
         registry
     }
