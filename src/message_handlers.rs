@@ -116,13 +116,17 @@ impl<'a> ImageFormatHandler for Yuv420Handler<'a> {
         // Convert YUV420 to RGB using yuvutils-rs
         let rgb_data = yuv420_to_rgb_with_yuvutils(&self.data.data, width, height)?;
 
-        // Create ndarray from converted RGB bytes
+        log::debug!("Creating ndarray for {}x{} image with {} RGB bytes", width, height, rgb_data.len());
+
+        // Create ndarray from converted RGB bytes with explicit row-major (C-order) layout
+        // The RGB data is in row-major format: RGBRGBRGB... for each row
         let image_array = ndarray::Array::from_shape_vec(
-            (height, width, 3).f(),
+            (height, width, 3).strides((width * 3, 3, 1)), // Explicit strides for HWC layout
             rgb_data
-        )?;
+        ).map_err(|e| format!("Failed to create ndarray: {:?}", e))?;
 
         let image = rerun::Image::from_color_model_and_tensor(rerun::ColorModel::RGB, image_array)?;
+        log::debug!("Successfully created rerun::Image, logging to entity: {}", entity_path);
         rec.log(entity_path, &image)?;
         Ok(())
     }
