@@ -21,13 +21,21 @@ fn get_current_timestamp_secs() -> f64 {
         .as_secs_f64()
 }
 
+fn ensure_leading_slash(entity_path: String) -> String {
+    if entity_path.starts_with('/') {
+        entity_path
+    } else {
+        format!("/{}", entity_path)
+    }
+}
+
 fn process_header_and_set_time(header: &Option<Header>, rec: &rerun::RecordingStream) -> (String, f64) {
     let (entity_path, header_time) = match header {
         Some(header) => {
             let time = header.timestamp
                 .map(|ts| timestamp_to_secs_f64(&ts))
                 .unwrap_or_else(get_current_timestamp_secs);
-            (header.entity_path.clone(), time)
+            (ensure_leading_slash(header.entity_path.clone()), time)
         }
         None => ("/".to_string(), get_current_timestamp_secs()),
     };
