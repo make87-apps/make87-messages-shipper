@@ -135,39 +135,77 @@ impl<'a> ImageFormatHandler for Yuv420Handler<'a> {
 // YUV420 to RGB conversion using yuvutils-rs v0.8
 fn yuv420_to_rgb_with_yuvutils(yuv_data: &[u8], width: usize, height: usize) -> Result<Vec<u8>, Box<dyn Error>> {
     let y_size = width * height;
-    let uv_size = y_size / 4;
+    let uv_size = y_size / 4;  // Each U and V plane is width/2 * height/2
+    let expected_total_size = y_size + 2 * uv_size;
 
-    if yuv_data.len() < y_size + 2 * uv_size {
-        return Err("Insufficient YUV420 data".into());
+    log::debug!("YUV420 conversion: {}x{}, Y_size={}, UV_size={}, expected_total={}, actual_data_len={}",
+                width, height, y_size, uv_size, expected_total_size, yuv_data.len());
+
+    if yuv_data.len() < expected_total_size {
+        return Err(format!("Insufficient YUV420 data: expected {}, got {}", expected_total_size, yuv_data.len()).into());
     }
 
     let y_plane = &yuv_data[0..y_size];
     let u_plane = &yuv_data[y_size..y_size + uv_size];
     let v_plane = &yuv_data[y_size + uv_size..y_size + 2 * uv_size];
 
-    // Create YuvPlanarImage structure
+    // Log some sample values for debugging
+    if !y_plane.is_empty() && !u_plane.is_empty() && !v_plane.is_empty() {
+        log::debug!("Sample YUV values: Y[0]={}, U[0]={}, V[0]={}", y_plane[0], u_plane[0], v_plane[0]);
+    }
+
+    // Create YuvPlanarImage structure with correct strides for packed data
+    // Since your encoder packs the data without padding, stride equals actual width
     let yuv_planar = yuvutils_rs::YuvPlanarImage {
         y_plane,
-        y_stride: width as u32,
+        y_stride: width as u32,  // Y plane stride = width (no padding)
         u_plane,
-        u_stride: (width / 2) as u32,
+        u_stride: (width / 2) as u32,  // U plane stride = width/2 (no padding)
         v_plane,
-        v_stride: (width / 2) as u32,
+        v_stride: (width / 2) as u32,  // V plane stride = width/2 (no padding)
         width: width as u32,
         height: height as u32,
     };
 
     let mut rgb_data = vec![0u8; width * height * 3];
 
-    yuvutils_rs::yuv420_to_rgb(
+    // Try full range first (more common with modern video)
+    let conversion_result = yuvutils_rs::yuv420_to_rgb(
         &yuv_planar,
         &mut rgb_data,
         width as u32 * 3, // RGB stride
-        yuvutils_rs::YuvRange::Limited,
-        yuvutils_rs::YuvStandardMatrix::Bt601,
-    ).map_err(|e| format!("YUV conversion error: {:?}", e))?;
+        yuvutils_rs::YuvRange::Full,  // Changed from Limited to Full
+        yuvutils_rs::YuvStandardMatrix::Bt709,  // Changed from Bt601 to Bt709 (more common for HD video)
+    );
 
-    Ok(rgb_data)
+    match conversion_result {
+        Ok(_) => {
+            log::debug!("YUV420 to RGB conversion successful with Full range, Bt709");
+            Ok(rgb_data)
+        }
+        Err(e) => {
+            log::warn!("YUV420 conversion failed with Full/Bt709, trying Limited/Bt601: {:?}", e);
+
+            // Fallback to limited range Bt601
+            let fallback_result = yuvutils_rs::yuv420_to_rgb(
+                &yuv_planar,
+                &mut rgb_data,
+                width as u32 * 3,
+                yuvutils_rs::YuvRange::Limited,
+                yuvutils_rs::YuvStandardMatrix::Bt601,
+            );
+
+            match fallback_result {
+                Ok(_) => {
+                    log::debug!("YUV420 to RGB conversion successful with Limited range, Bt601");
+                    Ok(rgb_data)
+                }
+                Err(fallback_e) => {
+                    Err(format!("YUV conversion failed with both parameter sets. Full/Bt709: {:?}, Limited/Bt601: {:?}", e, fallback_e).into())
+                }
+            }
+        }
+    }
 }
 
 struct Rgb888Handler<'a> {
