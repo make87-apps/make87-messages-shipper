@@ -4,6 +4,7 @@ use make87_messages::google::protobuf::Timestamp;
 use make87_messages::image::compressed::ImageJpeg;
 use make87_messages::image::uncompressed::{image_raw_any, ImageNv12, ImageRawAny, ImageRgb888, ImageRgba8888, ImageYuv420, ImageYuv422, ImageYuv444};
 use make87_messages::text::PlainText;
+use make87_messages::detection::r#box::Boxes2DAxisAligned;
 use regex::Regex;
 use std::collections::HashMap;
 use std::error::Error;
@@ -333,6 +334,62 @@ impl MessageHandler for ImageRgba8888Handler {
     }
 }
 
+pub struct Boxes2DAxisAlignedHandler {
+    encoder: ProtobufEncoder<Boxes2DAxisAligned>,
+}
+
+impl Boxes2DAxisAlignedHandler {
+    pub fn new() -> Self {
+        Self {
+            encoder: ProtobufEncoder::<Boxes2DAxisAligned>::new(),
+        }
+    }
+}
+
+impl MessageHandler for Boxes2DAxisAlignedHandler {
+    fn handle_message(&self, sample: &zenoh::sample::Sample, rec: &rerun::RecordingStream) -> Result<(), Box<dyn Error>> {
+        let message_decoded = self.encoder.decode(&sample.payload().to_bytes())?;
+        let (entity_path, _header_time) = process_header_and_set_time(&message_decoded.header, rec);
+
+        if message_decoded.boxes.is_empty() {
+            log::info!("No boxes to log in Boxes2DAxisAligned message");
+            return Ok(());
+        }
+
+        // Collect all box geometries for batch logging
+        let mut box_centers = Vec::new();
+        let mut box_half_sizes = Vec::new();
+
+        for (i, box_item) in message_decoded.boxes.iter().enumerate() {
+            if let Some(geometry) = &box_item.geometry {
+                // Convert box geometry to rerun format
+                // Assuming geometry has fields like x, y, width, height
+                let center_x = geometry.x + geometry.width / 2.0;
+                let center_y = geometry.y + geometry.height / 2.0;
+
+                box_centers.push([center_x, center_y]);
+                box_half_sizes.push([geometry.width / 2.0, geometry.height / 2.0]);
+
+                log::info!("Box {}: center=({}, {}), size=({}, {})",
+                          i, center_x, center_y, geometry.width, geometry.height);
+            } else {
+                log::warn!("Box {} has no geometry", i);
+            }
+        }
+
+        // Log all boxes in one batch call using Boxes2D
+        if !box_centers.is_empty() {
+            let box_count = box_centers.len();
+            rec.log(
+                entity_path,
+                &rerun::Boxes2D::from_centers_and_half_sizes(box_centers, box_half_sizes)
+            )?;
+            log::info!("Logged {} boxes to rerun", box_count);
+        }
+
+        Ok(())
+    }
+}
 
 type HandlerFactory = fn() -> Box<dyn MessageHandler>;
 
@@ -355,6 +412,9 @@ impl MessageTypeRegistry {
         registry.register("image-uncompressed-ImageYUV420", || Box::new(ImageYuv420Handler::new()));
         registry.register("image-uncompressed-ImageRGB888", || Box::new(ImageRgb888Handler::new()));
         registry.register("image-uncompressed-ImageRGBA8888", || Box::new(ImageRgba8888Handler::new()));
+
+        // Register detection message handlers
+        registry.register("detection-box-Boxes2DAxisAligned", || Box::new(Boxes2DAxisAlignedHandler::new()));
 
         registry
     }
