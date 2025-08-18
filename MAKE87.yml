@@ -19,7 +19,7 @@ interfaces:
           string: rerun-grpc
 container_config:
   environment:
-    RUST_LOG: info
+#    RUST_LOG: info
 build:
   build_kit:
     name: rust
