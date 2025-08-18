@@ -2,14 +2,14 @@ use make87::encodings::{Encoder, ProtobufEncoder};
 use make87_messages::core::Header;
 use make87_messages::google::protobuf::Timestamp;
 use make87_messages::image::compressed::ImageJpeg;
-use make87_messages::image::uncompressed::{image_raw_any, ImageNv12, ImageRawAny, ImageRgb888, ImageRgba8888, ImageYuv420, ImageYuv422, ImageYuv444};
+use make87_messages::image::uncompressed::{image_raw_any, ImageRawAny, ImageRgb888, ImageRgba8888, ImageYuv420};
 use make87_messages::text::PlainText;
 use make87_messages::detection::r#box::Boxes2DAxisAligned;
 use regex::Regex;
 use std::collections::HashMap;
 use std::error::Error;
 use std::time::{SystemTime, UNIX_EPOCH};
-use turbojpeg::{Compressor, Image, PixelFormat, YuvImage, Subsamp};
+use ndarray::ShapeBuilder as _;
 
 fn timestamp_to_secs_f64(ts: &Timestamp) -> f64 {
     ts.seconds as f64 + (ts.nanos as f64 / 1_000_000_000.0)
@@ -111,18 +111,25 @@ struct Yuv420Handler<'a> {
 
 impl<'a> ImageFormatHandler for Yuv420Handler<'a> {
     fn log_to_rerun(&self, entity_path: String, rec: &rerun::RecordingStream) -> Result<(), Box<dyn Error>> {
-        // Convert YUV420 directly to JPEG (more efficient than YUV->RGB->JPEG)
-        let jpeg_data = convert_yuv420_to_jpeg(self.data)?;
+        let width = self.data.width as usize;
+        let height = self.data.height as usize;
 
-        rec.log(
-            entity_path,
-            &rerun::EncodedImage::new(jpeg_data).with_media_type(rerun::MediaType::from("image/jpeg"))
-        )?;
+        // Convert YUV420 to RGB
+        let rgb_data = yuv420_to_rgb_with_yuvutils(&self.data.data, width, height)?;
+
+        // Create ndarray with explicit strides for proper HWC layout
+        let image_array = ndarray::Array::from_shape_vec(
+            (height, width, 3).strides((width * 3, 3, 1)),
+            rgb_data
+        ).map_err(|e| format!("Failed to create ndarray: {:?}", e))?;
+
+        let image = rerun::Image::from_color_model_and_tensor(rerun::ColorModel::RGB, image_array)?;
+        rec.log(entity_path, &image)?;
         Ok(())
     }
 
     fn get_format_name(&self) -> &'static str {
-        "YUV420 (JPEG compressed)"
+        "YUV420"
     }
 }
 
@@ -171,18 +178,22 @@ struct Rgb888Handler<'a> {
 
 impl<'a> ImageFormatHandler for Rgb888Handler<'a> {
     fn log_to_rerun(&self, entity_path: String, rec: &rerun::RecordingStream) -> Result<(), Box<dyn Error>> {
-        // Convert RGB888 to JPEG for bandwidth efficiency
-        let jpeg_data = convert_rgb888_to_jpeg(self.data)?;
+        let width = self.data.width as usize;
+        let height = self.data.height as usize;
 
-        rec.log(
-            entity_path,
-            &rerun::EncodedImage::new(jpeg_data).with_media_type(rerun::MediaType::from("image/jpeg"))
-        )?;
+        // Create ndarray with explicit strides for proper HWC layout
+        let image_array = ndarray::Array::from_shape_vec(
+            (height, width, 3).strides((width * 3, 3, 1)),
+            self.data.data.clone()
+        ).map_err(|e| format!("Failed to create ndarray: {:?}", e))?;
+
+        let image = rerun::Image::from_color_model_and_tensor(rerun::ColorModel::RGB, image_array)?;
+        rec.log(entity_path, &image)?;
         Ok(())
     }
 
     fn get_format_name(&self) -> &'static str {
-        "RGB888 (JPEG compressed)"
+        "RGB888"
     }
 }
 
@@ -192,18 +203,22 @@ struct Rgba8888Handler<'a> {
 
 impl<'a> ImageFormatHandler for Rgba8888Handler<'a> {
     fn log_to_rerun(&self, entity_path: String, rec: &rerun::RecordingStream) -> Result<(), Box<dyn Error>> {
-        // Convert RGBA8888 to JPEG for bandwidth efficiency
-        let jpeg_data = convert_rgba8888_to_jpeg(self.data)?;
+        let width = self.data.width as usize;
+        let height = self.data.height as usize;
 
-        rec.log(
-            entity_path,
-            &rerun::EncodedImage::new(jpeg_data).with_media_type(rerun::MediaType::from("image/jpeg"))
-        )?;
+        // Create ndarray with explicit strides for proper HWCA layout
+        let image_array = ndarray::Array::from_shape_vec(
+            (height, width, 4).strides((width * 4, 4, 1)),
+            self.data.data.clone()
+        ).map_err(|e| format!("Failed to create ndarray: {:?}", e))?;
+
+        let image = rerun::Image::from_color_model_and_tensor(rerun::ColorModel::RGBA, image_array)?;
+        rec.log(entity_path, &image)?;
         Ok(())
     }
 
     fn get_format_name(&self) -> &'static str {
-        "RGBA8888 (JPEG compressed)"
+        "RGBA8888"
     }
 }
 
@@ -435,246 +450,4 @@ impl MessageTypeRegistry {
             .and_then(|caps| caps.get(1))
             .map(|m| m.as_str())
     }
-}
-
-// JPEG conversion functions for all image formats
-fn convert_rgb888_to_jpeg(rgb888: &ImageRgb888) -> Result<Vec<u8>, Box<dyn Error>> {
-    let mut compressor = Compressor::new()?;
-    let pixels = rgb888.data.as_slice();
-    let width = rgb888.width as usize;
-    let height = rgb888.height as usize;
-    let pitch = width * 3;
-    let image = Image {
-        pixels,
-        width,
-        pitch,
-        height,
-        format: PixelFormat::RGB,
-    };
-    Ok(compressor.compress_to_vec(image)?)
-}
-
-fn convert_rgba8888_to_jpeg(rgba8888: &ImageRgba8888) -> Result<Vec<u8>, Box<dyn Error>> {
-    let mut compressor = Compressor::new()?;
-    let pixels = rgba8888.data.as_slice();
-    let width = rgba8888.width as usize;
-    let height = rgba8888.height as usize;
-    let pitch = width * 4;
-    let image = Image {
-        pixels,
-        width,
-        pitch,
-        height,
-        format: PixelFormat::RGBA,
-    };
-    Ok(compressor.compress_to_vec(image)?)
-}
-
-fn convert_yuv420_to_jpeg(yuv420: &ImageYuv420) -> Result<Vec<u8>, Box<dyn Error>> {
-    let mut compressor = Compressor::new()?;
-    let width = yuv420.width as usize;
-    let height = yuv420.height as usize;
-    let yuv_data = yuv420.data.as_slice();
-    let yuv_image = YuvImage {
-        pixels: yuv_data,
-        width,
-        align: 1,
-        height,
-        subsamp: Subsamp::Sub2x2, // YUV420
-    };
-    Ok(compressor.compress_yuv_to_vec(yuv_image)?)
-}
-
-fn convert_yuv422_to_jpeg(yuv422: &ImageYuv422) -> Result<Vec<u8>, Box<dyn Error>> {
-    let mut compressor = Compressor::new()?;
-    let width = yuv422.width as usize;
-    let height = yuv422.height as usize;
-    let yuv_data = yuv422.data.as_slice();
-    let yuv_image = YuvImage {
-        pixels: yuv_data,
-        width,
-        align: 1,
-        height,
-        subsamp: Subsamp::Sub2x1, // YUV422
-    };
-    Ok(compressor.compress_yuv_to_vec(yuv_image)?)
-}
-
-fn convert_yuv444_to_jpeg(yuv444: &ImageYuv444) -> Result<Vec<u8>, Box<dyn Error>> {
-    let mut compressor = Compressor::new()?;
-    let width = yuv444.width as usize;
-    let height = yuv444.height as usize;
-    let yuv_data = yuv444.data.as_slice();
-    let yuv_image = YuvImage {
-        pixels: yuv_data,
-        width,
-        align: 1,
-        height,
-        subsamp: Subsamp::None, // YUV444 - no subsampling
-    };
-    Ok(compressor.compress_yuv_to_vec(yuv_image)?)
-}
-
-fn convert_nv12_to_jpeg(nv12: &ImageNv12) -> Result<Vec<u8>, Box<dyn Error>> {
-    let mut compressor = Compressor::new()?;
-    let width = nv12.width as usize;
-    let height = nv12.height as usize;
-    let nv12_data = nv12.data.as_slice();
-
-    // NV12 format: Y plane followed by interleaved UV plane
-    let y_size = width * height;
-    let uv_size = y_size / 2; // UV plane is half the size (2x2 subsampling)
-
-    if nv12_data.len() < y_size + uv_size {
-        return Err(format!("NV12 data too small: expected {}, got {}", y_size + uv_size, nv12_data.len()).into());
-    }
-
-    // Create planar YUV420 data
-    let mut yuv420_data = Vec::with_capacity(y_size + uv_size);
-
-    // Copy Y plane as-is
-    yuv420_data.extend_from_slice(&nv12_data[0..y_size]);
-
-    // Convert interleaved UV to separate U and V planes
-    let uv_plane = &nv12_data[y_size..y_size + uv_size];
-
-    // Extract U components (even indices in UV plane)
-    for i in (0..uv_size).step_by(2) {
-        yuv420_data.push(uv_plane[i]);
-    }
-
-    // Extract V components (odd indices in UV plane)
-    for i in (1..uv_size).step_by(2) {
-        yuv420_data.push(uv_plane[i]);
-    }
-
-    let yuv_image = YuvImage {
-        pixels: yuv420_data.as_slice(),
-        width,
-        align: 1,
-        height,
-        subsamp: Subsamp::Sub2x2, // YUV420 (converted from NV12)
-    };
-    Ok(compressor.compress_yuv_to_vec(yuv_image)?)
-}
-
-// Universal conversion function for ImageRawAny (handles all formats)
-fn convert_to_jpeg(image_raw_any: &ImageRawAny) -> Result<Vec<u8>, Box<dyn Error>> {
-    let mut compressor = Compressor::new()?;
-
-    use image_raw_any::Image as RawImageVariant;
-
-    let jpeg_data = match &image_raw_any.image {
-        Some(RawImageVariant::Rgb888(rgb888)) => {
-            let pixels = rgb888.data.as_slice();
-            let width = rgb888.width as usize;
-            let height = rgb888.height as usize;
-            let pitch = width * 3;
-            let image = Image {
-                pixels,
-                width,
-                pitch,
-                height,
-                format: PixelFormat::RGB,
-            };
-            compressor.compress_to_vec(image)?
-        }
-        Some(RawImageVariant::Rgba8888(rgba8888)) => {
-            let pixels = rgba8888.data.as_slice();
-            let width = rgba8888.width as usize;
-            let height = rgba8888.height as usize;
-            let pitch = width * 4;
-            let image = Image {
-                pixels,
-                width,
-                pitch,
-                height,
-                format: PixelFormat::RGBA,
-            };
-            compressor.compress_to_vec(image)?
-        }
-        Some(RawImageVariant::Yuv420(yuv420)) => {
-            let width = yuv420.width as usize;
-            let height = yuv420.height as usize;
-            let yuv_data = yuv420.data.as_slice();
-            let yuv_image = YuvImage {
-                pixels: yuv_data,
-                width,
-                align: 1,
-                height,
-                subsamp: Subsamp::Sub2x2, // YUV420
-            };
-            compressor.compress_yuv_to_vec(yuv_image)?
-        }
-        Some(RawImageVariant::Yuv422(yuv422)) => {
-            let width = yuv422.width as usize;
-            let height = yuv422.height as usize;
-            let yuv_data = yuv422.data.as_slice();
-            let yuv_image = YuvImage {
-                pixels: yuv_data,
-                width,
-                align: 1,
-                height,
-                subsamp: Subsamp::Sub2x1, // YUV422
-            };
-            compressor.compress_yuv_to_vec(yuv_image)?
-        }
-        Some(RawImageVariant::Yuv444(yuv444)) => {
-            let width = yuv444.width as usize;
-            let height = yuv444.height as usize;
-            let yuv_data = yuv444.data.as_slice();
-            let yuv_image = YuvImage {
-                pixels: yuv_data,
-                width,
-                align: 1,
-                height,
-                subsamp: Subsamp::None, // YUV444
-            };
-            compressor.compress_yuv_to_vec(yuv_image)?
-        }
-        Some(RawImageVariant::Nv12(nv12)) => {
-            let width = nv12.width as usize;
-            let height = nv12.height as usize;
-            let nv12_data = nv12.data.as_slice();
-
-            // NV12 format: Y plane followed by interleaved UV plane
-            let y_size = width * height;
-            let uv_size = y_size / 2; // UV plane is half the size (2x2 subsampling)
-
-            if nv12_data.len() < y_size + uv_size {
-                return Err(format!("NV12 data too small: expected {}, got {}", y_size + uv_size, nv12_data.len()).into());
-            }
-
-            // Create planar YUV420 data
-            let mut yuv420_data = Vec::with_capacity(y_size + uv_size);
-
-            // Copy Y plane as-is
-            yuv420_data.extend_from_slice(&nv12_data[0..y_size]);
-
-            // Convert interleaved UV to separate U and V planes
-            let uv_plane = &nv12_data[y_size..y_size + uv_size];
-
-            // Extract U components (even indices in UV plane)
-            for i in (0..uv_size).step_by(2) {
-                yuv420_data.push(uv_plane[i]);
-            }
-
-            // Extract V components (odd indices in UV plane)
-            for i in (1..uv_size).step_by(2) {
-                yuv420_data.push(uv_plane[i]);
-            }
-
-            let yuv_image = YuvImage {
-                pixels: yuv420_data.as_slice(),
-                width,
-                align: 1,
-                height,
-                subsamp: Subsamp::Sub2x2, // YUV420 (converted from NV12)
-            };
-            compressor.compress_yuv_to_vec(yuv_image)?
-        }
-        None => return Err("No image data in ImageRawAny".into()),
-    };
-
-    Ok(jpeg_data)
 }
