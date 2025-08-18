@@ -26,4 +26,3 @@ dev_build:
     build_additions:
       ide: vscode_server_rust
       ssh: ssh_server
-
