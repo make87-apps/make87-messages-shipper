@@ -17,9 +17,6 @@ interfaces:
       - name: rerun-grpc-client
         spec:
           string: rerun-grpc
-container_config:
-  environment:
-    RUST_LOG: info
 build:
   build_kit:
     name: rust
@@ -29,3 +26,4 @@ dev_build:
     build_additions:
       ide: vscode_server_rust
       ssh: ssh_server
+
