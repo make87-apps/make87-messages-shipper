@@ -11,6 +11,7 @@ use ndarray::ShapeBuilder as _;
 use regex::Regex;
 use std::collections::HashMap;
 use std::error::Error;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn timestamp_to_secs_f64(ts: &Timestamp) -> f64 {
@@ -148,6 +149,23 @@ impl<'a> ImageFormatHandler for Yuv420Handler<'a> {
 
         let image = rerun::Image::from_color_model_and_tensor(rerun::ColorModel::RGB, image_array)?;
         rec.log(entity_path, &image)?;
+
+        // Force immediate flush to prevent buffering buildup
+        rec.flush_blocking();
+
+        // Debug: Monitor RecordingStream state every 20 frames
+        static RGB_FRAME_COUNT: AtomicU32 = AtomicU32::new(0);
+        let frame_num = RGB_FRAME_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+        if frame_num % 20 == 0 {
+            log::warn!(
+                "RGB888 - Frame {}: RecordingStream ref_count={}, enabled={}",
+                frame_num,
+                rec.ref_count(),
+                rec.is_enabled()
+            );
+            log::warn!("{:?}", rec.store_info());
+        }
+
         Ok(())
     }
 
@@ -230,6 +248,23 @@ impl<'a> ImageFormatHandler for Rgb888Handler<'a> {
             image_view.to_owned(),
         )?;
         rec.log(entity_path, &image)?;
+
+        // Force immediate flush to prevent buffering buildup
+        rec.flush_blocking();
+
+        // Debug: Monitor RecordingStream state every 20 frames
+        static YUV420_FRAME_COUNT: AtomicU32 = AtomicU32::new(0);
+        let frame_num = YUV420_FRAME_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+        if frame_num % 20 == 0 {
+            log::warn!(
+                "YUV420 - Frame {}: RecordingStream ref_count={}, enabled={}",
+                frame_num,
+                rec.ref_count(),
+                rec.is_enabled()
+            );
+            log::warn!("{:?}", rec.store_info());
+        }
+
         Ok(())
     }
 
@@ -263,6 +298,23 @@ impl<'a> ImageFormatHandler for Rgba8888Handler<'a> {
             image_view.to_owned(),
         )?;
         rec.log(entity_path, &image)?;
+
+        // Force immediate flush to prevent buffering buildup
+        rec.flush_blocking();
+
+        // Debug: Monitor RecordingStream state every 20 frames
+        static RGBA_FRAME_COUNT: AtomicU32 = AtomicU32::new(0);
+        let frame_num = RGBA_FRAME_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+        if frame_num % 20 == 0 {
+            log::warn!(
+                "RGBA8888 - Frame {}: RecordingStream ref_count={}, enabled={}",
+                frame_num,
+                rec.ref_count(),
+                rec.is_enabled()
+            );
+            log::warn!("{:?}", rec.store_info());
+        }
+
         Ok(())
     }
 
