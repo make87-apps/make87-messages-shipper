@@ -291,14 +291,23 @@ impl<'a> ImageFormatHandler for Yuv420Handler<'a> {
         println!("  🖼️  Native YUV420 rerun::Image creation: {:.3}ms", image_duration.as_secs_f64() * 1000.0);
 
         let log_start = Instant::now();
-        rec.log(entity_path, &image)?;
-        let log_duration = log_start.elapsed();
-        println!("  📤 YUV420 rerun log call: {:.3}ms", log_duration.as_secs_f64() * 1000.0);
+        println!("  🎯 About to log YUV420 image to entity: '{}', data size: {} bytes", entity_path, data_size);
+        match rec.log(&entity_path, &image) {
+            Ok(()) => {
+                let log_duration = log_start.elapsed();
+                println!("  ✅ YUV420 rerun log SUCCESS: {:.3}ms", log_duration.as_secs_f64() * 1000.0);
+            }
+            Err(e) => {
+                println!("  ❌ YUV420 rerun log FAILED: {}", e);
+                return Err(e.into());
+            }
+        }
         
         // Periodically flush rerun buffers (async, non-blocking) to prevent memory accumulation
         static FLUSH_COUNTER: AtomicU32 = AtomicU32::new(0);
         let flush_count = FLUSH_COUNTER.fetch_add(1, Ordering::Relaxed);
         if flush_count % 10 == 0 {  // Flush every 10 frames instead of every frame
+            println!("  🚽 Triggering async flush (frame {})", flush_count);
             rec.flush_async();
             println!("  🚽 Async flush triggered (non-blocking)");
         }
@@ -365,9 +374,18 @@ impl<'a> ImageFormatHandler for Rgb888Handler<'a> {
         println!("  🖼️  Native RGB888 rerun::Image creation: {:.3}ms", image_duration.as_secs_f64() * 1000.0);
 
         let log_start = Instant::now();
-        rec.log(entity_path, &image)?;
-        let log_duration = log_start.elapsed();
-        println!("  📤 RGB888 rerun log call: {:.3}ms", log_duration.as_secs_f64() * 1000.0);
+        let data_size = self.data.data.len();
+        println!("  🎯 About to log RGB888 image to entity: '{}', data size: {} bytes", entity_path, data_size);
+        match rec.log(&entity_path, &image) {
+            Ok(()) => {
+                let log_duration = log_start.elapsed();
+                println!("  ✅ RGB888 rerun log SUCCESS: {:.3}ms", log_duration.as_secs_f64() * 1000.0);
+            }
+            Err(e) => {
+                println!("  ❌ RGB888 rerun log FAILED: {}", e);
+                return Err(e.into());
+            }
+        }
         
         let total_duration = total_start.elapsed();
         println!("  ⏱️  Total native RGB888 processing: {:.3}ms", total_duration.as_secs_f64() * 1000.0);
@@ -419,9 +437,18 @@ impl<'a> ImageFormatHandler for Rgba8888Handler<'a> {
         println!("  🖼️  Native RGBA8888 rerun::Image creation: {:.3}ms", image_duration.as_secs_f64() * 1000.0);
 
         let log_start = Instant::now();
-        rec.log(entity_path, &image)?;
-        let log_duration = log_start.elapsed();
-        println!("  📤 RGBA8888 rerun log call: {:.3}ms", log_duration.as_secs_f64() * 1000.0);
+        let data_size = self.data.data.len();
+        println!("  🎯 About to log RGBA8888 image to entity: '{}', data size: {} bytes", entity_path, data_size);
+        match rec.log(&entity_path, &image) {
+            Ok(()) => {
+                let log_duration = log_start.elapsed();
+                println!("  ✅ RGBA8888 rerun log SUCCESS: {:.3}ms", log_duration.as_secs_f64() * 1000.0);
+            }
+            Err(e) => {
+                println!("  ❌ RGBA8888 rerun log FAILED: {}", e);
+                return Err(e.into());
+            }
+        }
         
         let total_duration = total_start.elapsed();
         println!("  ⏱️  Total native RGBA8888 processing: {:.3}ms", total_duration.as_secs_f64() * 1000.0);
@@ -474,9 +501,18 @@ impl<'a> ImageFormatHandler for Nv12Handler<'a> {
         println!("  🖼️  Native NV12 rerun::Image creation: {:.3}ms", image_duration.as_secs_f64() * 1000.0);
 
         let log_start = Instant::now();
-        rec.log(entity_path, &image)?;
-        let log_duration = log_start.elapsed();
-        println!("  📤 NV12 rerun log call: {:.3}ms", log_duration.as_secs_f64() * 1000.0);
+        let data_size = self.data.data.len();
+        println!("  🎯 About to log NV12 image to entity: '{}', data size: {} bytes", entity_path, data_size);
+        match rec.log(&entity_path, &image) {
+            Ok(()) => {
+                let log_duration = log_start.elapsed();
+                println!("  ✅ NV12 rerun log SUCCESS: {:.3}ms", log_duration.as_secs_f64() * 1000.0);
+            }
+            Err(e) => {
+                println!("  ❌ NV12 rerun log FAILED: {}", e);
+                return Err(e.into());
+            }
+        }
         
         let total_duration = total_start.elapsed();
         println!("  ⏱️  Total native NV12 processing: {:.3}ms", total_duration.as_secs_f64() * 1000.0);
