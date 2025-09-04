@@ -1,15 +1,17 @@
 use make87::encodings::{Encoder, ProtobufEncoder};
 use make87_messages::core::Header;
+use make87_messages::detection::r#box::Boxes2DAxisAligned;
 use make87_messages::google::protobuf::Timestamp;
 use make87_messages::image::compressed::ImageJpeg;
-use make87_messages::image::uncompressed::{image_raw_any, ImageRawAny, ImageRgb888, ImageRgba8888, ImageYuv420};
+use make87_messages::image::uncompressed::{
+    image_raw_any, ImageRawAny, ImageRgb888, ImageRgba8888, ImageYuv420,
+};
 use make87_messages::text::PlainText;
-use make87_messages::detection::r#box::Boxes2DAxisAligned;
+use ndarray::ShapeBuilder as _;
 use regex::Regex;
 use std::collections::HashMap;
 use std::error::Error;
 use std::time::{SystemTime, UNIX_EPOCH};
-use ndarray::ShapeBuilder as _;
 
 fn timestamp_to_secs_f64(ts: &Timestamp) -> f64 {
     ts.seconds as f64 + (ts.nanos as f64 / 1_000_000_000.0)
@@ -30,10 +32,14 @@ fn ensure_leading_slash(entity_path: String) -> String {
     }
 }
 
-fn process_header_and_set_time(header: &Option<Header>, rec: &rerun::RecordingStream) -> (String, f64) {
+fn process_header_and_set_time(
+    header: &Option<Header>,
+    rec: &rerun::RecordingStream,
+) -> (String, f64) {
     let (entity_path, header_time) = match header {
         Some(header) => {
-            let time = header.timestamp
+            let time = header
+                .timestamp
                 .map(|ts| timestamp_to_secs_f64(&ts))
                 .unwrap_or_else(get_current_timestamp_secs);
             (ensure_leading_slash(header.entity_path.clone()), time)
@@ -46,7 +52,11 @@ fn process_header_and_set_time(header: &Option<Header>, rec: &rerun::RecordingSt
 }
 
 pub trait MessageHandler {
-    fn handle_message(&self, sample: &zenoh::sample::Sample, rec: &rerun::RecordingStream) -> Result<(), Box<dyn Error>>;
+    fn handle_message(
+        &self,
+        sample: &zenoh::sample::Sample,
+        rec: &rerun::RecordingStream,
+    ) -> Result<(), Box<dyn Error>>;
 }
 
 pub struct TextPlainTextHandler {
@@ -62,14 +72,15 @@ impl TextPlainTextHandler {
 }
 
 impl MessageHandler for TextPlainTextHandler {
-    fn handle_message(&self, sample: &zenoh::sample::Sample, rec: &rerun::RecordingStream) -> Result<(), Box<dyn Error>> {
+    fn handle_message(
+        &self,
+        sample: &zenoh::sample::Sample,
+        rec: &rerun::RecordingStream,
+    ) -> Result<(), Box<dyn Error>> {
         let message_decoded = self.encoder.decode(&sample.payload().to_bytes())?;
         let (entity_path, _header_time) = process_header_and_set_time(&message_decoded.header, rec);
 
-        rec.log(
-            entity_path,
-            &rerun::TextDocument::new(message_decoded.body)
-        )?;
+        rec.log(entity_path, &rerun::TextDocument::new(message_decoded.body))?;
         Ok(())
     }
 }
@@ -87,12 +98,17 @@ impl ImageCompressedJpegHandler {
 }
 
 impl MessageHandler for ImageCompressedJpegHandler {
-    fn handle_message(&self, sample: &zenoh::sample::Sample, rec: &rerun::RecordingStream) -> Result<(), Box<dyn Error>> {
+    fn handle_message(
+        &self,
+        sample: &zenoh::sample::Sample,
+        rec: &rerun::RecordingStream,
+    ) -> Result<(), Box<dyn Error>> {
         let message_decoded = self.encoder.decode(&sample.payload().to_bytes())?;
         let (entity_path, _header_time) = process_header_and_set_time(&message_decoded.header, rec);
         rec.log(
             entity_path,
-            &rerun::EncodedImage::new(message_decoded.data).with_media_type(rerun::MediaType::from("image/jpeg"))
+            &rerun::EncodedImage::new(message_decoded.data)
+                .with_media_type(rerun::MediaType::from("image/jpeg")),
         )?;
         Ok(())
     }
@@ -100,7 +116,11 @@ impl MessageHandler for ImageCompressedJpegHandler {
 
 // Trait for handling different image formats
 trait ImageFormatHandler {
-    fn log_to_rerun(&self, entity_path: String, rec: &rerun::RecordingStream) -> Result<(), Box<dyn Error>>;
+    fn log_to_rerun(
+        &self,
+        entity_path: String,
+        rec: &rerun::RecordingStream,
+    ) -> Result<(), Box<dyn Error>>;
     fn get_format_name(&self) -> &'static str;
 }
 
@@ -110,7 +130,11 @@ struct Yuv420Handler<'a> {
 }
 
 impl<'a> ImageFormatHandler for Yuv420Handler<'a> {
-    fn log_to_rerun(&self, entity_path: String, rec: &rerun::RecordingStream) -> Result<(), Box<dyn Error>> {
+    fn log_to_rerun(
+        &self,
+        entity_path: String,
+        rec: &rerun::RecordingStream,
+    ) -> Result<(), Box<dyn Error>> {
         let width = self.data.width as usize;
         let height = self.data.height as usize;
 
@@ -118,10 +142,9 @@ impl<'a> ImageFormatHandler for Yuv420Handler<'a> {
         let rgb_data = yuv420_to_rgb_with_yuvutils(&self.data.data, width, height)?;
 
         // Create ndarray with explicit strides for proper HWC layout
-        let image_array = ndarray::Array::from_shape_vec(
-            (height, width, 3).strides((width * 3, 3, 1)),
-            rgb_data
-        ).map_err(|e| format!("Failed to create ndarray: {:?}", e))?;
+        let image_array =
+            ndarray::Array::from_shape_vec((height, width, 3).strides((width * 3, 3, 1)), rgb_data)
+                .map_err(|e| format!("Failed to create ndarray: {:?}", e))?;
 
         let image = rerun::Image::from_color_model_and_tensor(rerun::ColorModel::RGB, image_array)?;
         rec.log(entity_path, &image)?;
@@ -134,13 +157,22 @@ impl<'a> ImageFormatHandler for Yuv420Handler<'a> {
 }
 
 // YUV420 to RGB conversion using yuvutils-rs
-fn yuv420_to_rgb_with_yuvutils(yuv_data: &[u8], width: usize, height: usize) -> Result<Vec<u8>, Box<dyn Error>> {
+fn yuv420_to_rgb_with_yuvutils(
+    yuv_data: &[u8],
+    width: usize,
+    height: usize,
+) -> Result<Vec<u8>, Box<dyn Error>> {
     let y_size = width * height;
     let uv_size = y_size / 4;
     let expected_total_size = y_size + 2 * uv_size;
 
     if yuv_data.len() < expected_total_size {
-        return Err(format!("Insufficient YUV420 data: expected {}, got {}", expected_total_size, yuv_data.len()).into());
+        return Err(format!(
+            "Insufficient YUV420 data: expected {}, got {}",
+            expected_total_size,
+            yuv_data.len()
+        )
+        .into());
     }
 
     let y_plane = &yuv_data[0..y_size];
@@ -167,7 +199,8 @@ fn yuv420_to_rgb_with_yuvutils(yuv_data: &[u8], width: usize, height: usize) -> 
         width as u32 * 3,
         yuvutils_rs::YuvRange::Limited,
         yuvutils_rs::YuvStandardMatrix::Bt709,
-    ).map_err(|e| format!("YUV420 to RGB conversion failed: {:?}", e))?;
+    )
+    .map_err(|e| format!("YUV420 to RGB conversion failed: {:?}", e))?;
 
     Ok(rgb_data)
 }
@@ -177,17 +210,25 @@ struct Rgb888Handler<'a> {
 }
 
 impl<'a> ImageFormatHandler for Rgb888Handler<'a> {
-    fn log_to_rerun(&self, entity_path: String, rec: &rerun::RecordingStream) -> Result<(), Box<dyn Error>> {
+    fn log_to_rerun(
+        &self,
+        entity_path: String,
+        rec: &rerun::RecordingStream,
+    ) -> Result<(), Box<dyn Error>> {
         let width = self.data.width as usize;
         let height = self.data.height as usize;
 
-        // Create ndarray with explicit strides for proper HWC layout
-        let image_array = ndarray::Array::from_shape_vec(
+        // Create ndarray with explicit strides for proper HWC layout - zero copy
+        let image_view = ndarray::ArrayView3::from_shape(
             (height, width, 3).strides((width * 3, 3, 1)),
-            self.data.data.clone()
-        ).map_err(|e| format!("Failed to create ndarray: {:?}", e))?;
+            &self.data.data,
+        )
+        .map_err(|e| format!("Failed to create ndarray: {:?}", e))?;
 
-        let image = rerun::Image::from_color_model_and_tensor(rerun::ColorModel::RGB, image_array)?;
+        let image = rerun::Image::from_color_model_and_tensor(
+            rerun::ColorModel::RGB,
+            image_view.to_owned(),
+        )?;
         rec.log(entity_path, &image)?;
         Ok(())
     }
@@ -202,17 +243,25 @@ struct Rgba8888Handler<'a> {
 }
 
 impl<'a> ImageFormatHandler for Rgba8888Handler<'a> {
-    fn log_to_rerun(&self, entity_path: String, rec: &rerun::RecordingStream) -> Result<(), Box<dyn Error>> {
+    fn log_to_rerun(
+        &self,
+        entity_path: String,
+        rec: &rerun::RecordingStream,
+    ) -> Result<(), Box<dyn Error>> {
         let width = self.data.width as usize;
         let height = self.data.height as usize;
 
-        // Create ndarray with explicit strides for proper HWCA layout
-        let image_array = ndarray::Array::from_shape_vec(
+        // Create ndarray with explicit strides for proper HWCA layout - zero copy
+        let image_view = ndarray::ArrayView3::from_shape(
             (height, width, 4).strides((width * 4, 4, 1)),
-            self.data.data.clone()
-        ).map_err(|e| format!("Failed to create ndarray: {:?}", e))?;
+            &self.data.data,
+        )
+        .map_err(|e| format!("Failed to create ndarray: {:?}", e))?;
 
-        let image = rerun::Image::from_color_model_and_tensor(rerun::ColorModel::RGBA, image_array)?;
+        let image = rerun::Image::from_color_model_and_tensor(
+            rerun::ColorModel::RGBA,
+            image_view.to_owned(),
+        )?;
         rec.log(entity_path, &image)?;
         Ok(())
     }
@@ -223,7 +272,11 @@ impl<'a> ImageFormatHandler for Rgba8888Handler<'a> {
 }
 
 // Helper function to handle any image format
-fn handle_image_format(handler: &dyn ImageFormatHandler, entity_path: String, rec: &rerun::RecordingStream) -> Result<(), Box<dyn Error>> {
+fn handle_image_format(
+    handler: &dyn ImageFormatHandler,
+    entity_path: String,
+    rec: &rerun::RecordingStream,
+) -> Result<(), Box<dyn Error>> {
     log::info!("Processing {} image", handler.get_format_name());
     handler.log_to_rerun(entity_path, rec)
 }
@@ -242,7 +295,11 @@ impl ImageRawAnyHandler {
 }
 
 impl MessageHandler for ImageRawAnyHandler {
-    fn handle_message(&self, sample: &zenoh::sample::Sample, rec: &rerun::RecordingStream) -> Result<(), Box<dyn Error>> {
+    fn handle_message(
+        &self,
+        sample: &zenoh::sample::Sample,
+        rec: &rerun::RecordingStream,
+    ) -> Result<(), Box<dyn Error>> {
         let message_decoded = self.encoder.decode(&sample.payload().to_bytes())?;
         let (entity_path, _header_time) = process_header_and_set_time(&message_decoded.header, rec);
 
@@ -295,11 +352,17 @@ impl ImageYuv420Handler {
 }
 
 impl MessageHandler for ImageYuv420Handler {
-    fn handle_message(&self, sample: &zenoh::sample::Sample, rec: &rerun::RecordingStream) -> Result<(), Box<dyn Error>> {
+    fn handle_message(
+        &self,
+        sample: &zenoh::sample::Sample,
+        rec: &rerun::RecordingStream,
+    ) -> Result<(), Box<dyn Error>> {
         let message_decoded = self.encoder.decode(&sample.payload().to_bytes())?;
         let (entity_path, _header_time) = process_header_and_set_time(&message_decoded.header, rec);
 
-        let handler = Yuv420Handler { data: &message_decoded };
+        let handler = Yuv420Handler {
+            data: &message_decoded,
+        };
         handle_image_format(&handler, entity_path, rec)
     }
 }
@@ -317,15 +380,20 @@ impl ImageRgb888Handler {
 }
 
 impl MessageHandler for ImageRgb888Handler {
-    fn handle_message(&self, sample: &zenoh::sample::Sample, rec: &rerun::RecordingStream) -> Result<(), Box<dyn Error>> {
+    fn handle_message(
+        &self,
+        sample: &zenoh::sample::Sample,
+        rec: &rerun::RecordingStream,
+    ) -> Result<(), Box<dyn Error>> {
         let message_decoded = self.encoder.decode(&sample.payload().to_bytes())?;
         let (entity_path, _header_time) = process_header_and_set_time(&message_decoded.header, rec);
 
-        let handler = Rgb888Handler { data: &message_decoded };
+        let handler = Rgb888Handler {
+            data: &message_decoded,
+        };
         handle_image_format(&handler, entity_path, rec)
     }
 }
-
 
 pub struct ImageRgba8888Handler {
     encoder: ProtobufEncoder<ImageRgba8888>,
@@ -340,11 +408,17 @@ impl ImageRgba8888Handler {
 }
 
 impl MessageHandler for ImageRgba8888Handler {
-    fn handle_message(&self, sample: &zenoh::sample::Sample, rec: &rerun::RecordingStream) -> Result<(), Box<dyn Error>> {
+    fn handle_message(
+        &self,
+        sample: &zenoh::sample::Sample,
+        rec: &rerun::RecordingStream,
+    ) -> Result<(), Box<dyn Error>> {
         let message_decoded = self.encoder.decode(&sample.payload().to_bytes())?;
         let (entity_path, _header_time) = process_header_and_set_time(&message_decoded.header, rec);
 
-        let handler = Rgba8888Handler { data: &message_decoded };
+        let handler = Rgba8888Handler {
+            data: &message_decoded,
+        };
         handle_image_format(&handler, entity_path, rec)
     }
 }
@@ -362,7 +436,11 @@ impl Boxes2DAxisAlignedHandler {
 }
 
 impl MessageHandler for Boxes2DAxisAlignedHandler {
-    fn handle_message(&self, sample: &zenoh::sample::Sample, rec: &rerun::RecordingStream) -> Result<(), Box<dyn Error>> {
+    fn handle_message(
+        &self,
+        sample: &zenoh::sample::Sample,
+        rec: &rerun::RecordingStream,
+    ) -> Result<(), Box<dyn Error>> {
         let message_decoded = self.encoder.decode(&sample.payload().to_bytes())?;
         let (entity_path, _header_time) = process_header_and_set_time(&message_decoded.header, rec);
 
@@ -385,8 +463,14 @@ impl MessageHandler for Boxes2DAxisAlignedHandler {
                 box_centers.push([center_x, center_y]);
                 box_half_sizes.push([geometry.width / 2.0, geometry.height / 2.0]);
 
-                log::info!("Box {}: center=({}, {}), size=({}, {})",
-                          i, center_x, center_y, geometry.width, geometry.height);
+                log::info!(
+                    "Box {}: center=({}, {}), size=({}, {})",
+                    i,
+                    center_x,
+                    center_y,
+                    geometry.width,
+                    geometry.height
+                );
             } else {
                 log::warn!("Box {} has no geometry", i);
             }
@@ -397,7 +481,7 @@ impl MessageHandler for Boxes2DAxisAlignedHandler {
             let box_count = box_centers.len();
             rec.log(
                 entity_path,
-                &rerun::Boxes2D::from_centers_and_half_sizes(box_centers, box_half_sizes)
+                &rerun::Boxes2D::from_centers_and_half_sizes(box_centers, box_half_sizes),
             )?;
             log::info!("Logged {} boxes to rerun", box_count);
         }
@@ -420,16 +504,28 @@ impl MessageTypeRegistry {
 
         // Register message types with their corresponding handlers
         registry.register("text-PlainText", || Box::new(TextPlainTextHandler::new()));
-        registry.register("image-compressed-ImageJPEG", || Box::new(ImageCompressedJpegHandler::new()));
+        registry.register("image-compressed-ImageJPEG", || {
+            Box::new(ImageCompressedJpegHandler::new())
+        });
 
         // Register composite and individual image format handlers
-        registry.register("image-uncompressed-ImageRawAny", || Box::new(ImageRawAnyHandler::new()));
-        registry.register("image-uncompressed-ImageYUV420", || Box::new(ImageYuv420Handler::new()));
-        registry.register("image-uncompressed-ImageRGB888", || Box::new(ImageRgb888Handler::new()));
-        registry.register("image-uncompressed-ImageRGBA8888", || Box::new(ImageRgba8888Handler::new()));
+        registry.register("image-uncompressed-ImageRawAny", || {
+            Box::new(ImageRawAnyHandler::new())
+        });
+        registry.register("image-uncompressed-ImageYUV420", || {
+            Box::new(ImageYuv420Handler::new())
+        });
+        registry.register("image-uncompressed-ImageRGB888", || {
+            Box::new(ImageRgb888Handler::new())
+        });
+        registry.register("image-uncompressed-ImageRGBA8888", || {
+            Box::new(ImageRgba8888Handler::new())
+        });
 
         // Register detection message handlers
-        registry.register("detection-box-Boxes2DAxisAligned", || Box::new(Boxes2DAxisAlignedHandler::new()));
+        registry.register("detection-box-Boxes2DAxisAligned", || {
+            Box::new(Boxes2DAxisAlignedHandler::new())
+        });
 
         registry
     }
@@ -438,7 +534,10 @@ impl MessageTypeRegistry {
         self.handlers.insert(message_type, factory);
     }
 
-    pub fn create_handler_from_topic_key(&self, topic_key: &str) -> Option<Box<dyn MessageHandler>> {
+    pub fn create_handler_from_topic_key(
+        &self,
+        topic_key: &str,
+    ) -> Option<Box<dyn MessageHandler>> {
         let message_type = self.extract_message_type_from_topic_key(topic_key)?;
         let factory = self.handlers.get(message_type)?;
         Some(factory())
