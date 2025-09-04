@@ -306,12 +306,10 @@ impl<'a> ImageFormatHandler for Yuv420Handler<'a> {
         // Periodically flush rerun buffers (async, non-blocking) to prevent memory accumulation
         static FLUSH_COUNTER: AtomicU32 = AtomicU32::new(0);
         let flush_count = FLUSH_COUNTER.fetch_add(1, Ordering::Relaxed);
-        if flush_count % 50 == 0 {  // Flush every 50 frames to reduce blocking impact
-            println!("  🚽 Triggering blocking flush (frame {})", flush_count);
-            let flush_start = Instant::now();
-            rec.flush_blocking();
-            let flush_duration = flush_start.elapsed();
-            println!("  🚽 Blocking flush completed: {:.3}ms", flush_duration.as_secs_f64() * 1000.0);
+        // Try async flush every frame - maybe async wasn't working because it wasn't frequent enough
+        rec.flush_async();
+        if flush_count % 20 == 0 {
+            println!("  🚽 Async flush called every frame (logged every 20 frames: {})", flush_count);
         }
         
         let total_duration = total_start.elapsed();
