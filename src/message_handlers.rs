@@ -18,6 +18,29 @@ fn timestamp_to_secs_f64(ts: &Timestamp) -> f64 {
     ts.seconds as f64 + (ts.nanos as f64 / 1_000_000_000.0)
 }
 
+fn format_timestamp_human_readable(ts: &Timestamp) -> String {
+    use std::time::{Duration, UNIX_EPOCH};
+
+    let duration = Duration::from_secs(ts.seconds as u64) + Duration::from_nanos(ts.nanos as u64);
+    let system_time = UNIX_EPOCH + duration;
+
+    match system_time.duration_since(UNIX_EPOCH) {
+        Ok(d) => {
+            let millis = d.as_millis();
+            let seconds = d.as_secs();
+            let ms_part = millis % 1000;
+
+            // Format as HH:MM:SS.mmm
+            let hours = (seconds / 3600) % 24;
+            let minutes = (seconds / 60) % 60;
+            let secs = seconds % 60;
+
+            format!("{:02}:{:02}:{:02}.{:03}", hours, minutes, secs, ms_part)
+        }
+        Err(_) => "Invalid timestamp".to_string(),
+    }
+}
+
 fn get_current_timestamp_secs() -> f64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -79,6 +102,21 @@ impl MessageHandler for TextPlainTextHandler {
         rec: &rerun::RecordingStream,
     ) -> Result<(), Box<dyn Error>> {
         let message_decoded = self.encoder.decode(&sample.payload().to_bytes())?;
+
+        // Print timestamp from header to check camera timing
+        if let Some(header) = &message_decoded.header {
+            if let Some(timestamp) = &header.timestamp {
+                println!(
+                    "🕐 Camera timestamp: {}",
+                    format_timestamp_human_readable(timestamp)
+                );
+            } else {
+                println!("🕐 No timestamp in header");
+            }
+        } else {
+            println!("🕐 No header in message");
+        }
+
         let (entity_path, _header_time) = process_header_and_set_time(&message_decoded.header, rec);
 
         rec.log(entity_path, &rerun::TextDocument::new(message_decoded.body))?;
