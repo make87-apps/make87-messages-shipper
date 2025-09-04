@@ -1,6 +1,7 @@
 use make87::interfaces::rerun::RerunGRpcInterface;
 use make87::interfaces::zenoh::{ConfiguredSubscriber, ZenohInterface};
 use std::error::Error;
+use std::time::Instant;
 
 mod message_handlers;
 use message_handlers::MessageTypeRegistry;
@@ -29,10 +30,14 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
             while let Ok(sample) = sub.recv_async().await {
                 println!("Received sample. Topic: {}", sample.key_expr());
-
+                
+                // Time the entire message handling process
+                let process_start = Instant::now();
                 if let Err(e) = handler.handle_message(&sample, &rec) {
                     log::error!("Error handling message: {}", e);
                 }
+                let process_duration = process_start.elapsed();
+                println!("⏱️  Processing took: {:.3}ms", process_duration.as_secs_f64() * 1000.0);
             }
         }
         ConfiguredSubscriber::Ring(sub) => {
@@ -44,10 +49,14 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
             while let Ok(sample) = sub.recv_async().await {
                 println!("Received sample. Topic: {}", sample.key_expr());
-
+                
+                // Time the entire message handling process
+                let process_start = Instant::now();
                 if let Err(e) = handler.handle_message(&sample, &rec) {
                     log::error!("Error handling message: {}", e);
                 }
+                let process_duration = process_start.elapsed();
+                println!("⏱️  Processing took: {:.3}ms", process_duration.as_secs_f64() * 1000.0);
             }
         }
     }

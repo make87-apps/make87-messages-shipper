@@ -12,7 +12,13 @@ use regex::Regex;
 use std::collections::HashMap;
 use std::error::Error;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+// Global state for frame drop detection
+static LAST_CAMERA_TIMESTAMP: Mutex<Option<f64>> = Mutex::new(None);
+static TOTAL_FRAMES_RECEIVED: AtomicU32 = AtomicU32::new(0);
+static TOTAL_FRAMES_DROPPED: AtomicU32 = AtomicU32::new(0);
 
 fn timestamp_to_secs_f64(ts: &Timestamp) -> f64 {
     ts.seconds as f64 + (ts.nanos as f64 / 1_000_000_000.0)
@@ -66,6 +72,27 @@ fn get_current_timestamp_secs() -> f64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs_f64()
+}
+
+fn detect_frame_drops(current_timestamp: f64) {
+    let frames_received = TOTAL_FRAMES_RECEIVED.fetch_add(1, Ordering::Relaxed) + 1;
+    
+    if let Ok(mut last_ts) = LAST_CAMERA_TIMESTAMP.lock() {
+        if let Some(last) = *last_ts {
+            let time_gap = current_timestamp - last;
+            // Assuming 20fps = 50ms intervals, detect drops if gap > 75ms
+            if time_gap > 0.075 {
+                let expected_frames = (time_gap / 0.05).round() as u32;
+                let dropped_frames = expected_frames - 1; // -1 because we got the current frame
+                if dropped_frames > 0 {
+                    let total_dropped = TOTAL_FRAMES_DROPPED.fetch_add(dropped_frames, Ordering::Relaxed) + dropped_frames;
+                    println!("🚨 Frame drop detected! Gap: {:.3}s, Estimated drops: {}, Total dropped: {}, Total received: {}", 
+                        time_gap, dropped_frames, total_dropped, frames_received);
+                }
+            }
+        }
+        *last_ts = Some(current_timestamp);
+    }
 }
 
 fn ensure_leading_slash(entity_path: String) -> String {
@@ -230,11 +257,15 @@ impl<'a> ImageFormatHandler for Yuv420Handler<'a> {
         let frame_num = RGB_FRAME_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
         println!("🔍 RGB888 Frame {} processed", frame_num);
         if frame_num % 20 == 0 {
+            let frames_received = TOTAL_FRAMES_RECEIVED.load(Ordering::Relaxed);
+            let frames_dropped = TOTAL_FRAMES_DROPPED.load(Ordering::Relaxed);
+            let drop_rate = if frames_received > 0 { (frames_dropped as f32 / (frames_received + frames_dropped) as f32) * 100.0 } else { 0.0 };
             println!(
-                "🔍 RGB888 - Frame {}: RecordingStream ref_count={}, enabled={}",
+                "🔍 RGB888 - Frame {}: RecordingStream ref_count={}, enabled={}, Drop rate: {:.1}%",
                 frame_num,
                 rec.ref_count(),
-                rec.is_enabled()
+                rec.is_enabled(),
+                drop_rate
             );
             println!("📊 RGB888 - Store info: {:?}", rec.store_info());
         }
@@ -421,9 +452,11 @@ impl MessageHandler for ImageRawAnyHandler {
     ) -> Result<(), Box<dyn Error>> {
         let message_decoded = self.encoder.decode(&sample.payload().to_bytes())?;
 
-        // Print timestamp from header to check camera timing
+        // Print timestamp from header to check camera timing and detect frame drops
         if let Some(header) = &message_decoded.header {
             if let Some(timestamp) = &header.timestamp {
+                let timestamp_secs = timestamp_to_secs_f64(timestamp);
+                detect_frame_drops(timestamp_secs);
                 println!(
                     "🕐 Camera timestamp: {} | Wallclock: {}",
                     format_timestamp_human_readable(timestamp),
