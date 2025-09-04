@@ -114,10 +114,10 @@ impl<'a> ImageFormatHandler for Yuv420Handler<'a> {
         let width = self.data.width as usize;
         let height = self.data.height as usize;
 
-        // Convert YUV420 to RGB - this still needs to allocate for conversion
+        // Convert YUV420 to RGB
         let rgb_data = yuv420_to_rgb_with_yuvutils(&self.data.data, width, height)?;
 
-        // Create ndarray taking ownership of the RGB data to avoid extra copying
+        // Create ndarray with explicit strides for proper HWC layout
         let image_array = ndarray::Array::from_shape_vec(
             (height, width, 3).strides((width * 3, 3, 1)),
             rgb_data
@@ -181,14 +181,11 @@ impl<'a> ImageFormatHandler for Rgb888Handler<'a> {
         let width = self.data.width as usize;
         let height = self.data.height as usize;
 
-        // Use ArrayView to avoid cloning by creating a view that borrows the data
-        // Convert to owned array only when rerun requires it
-        let data_slice = &self.data.data;
-        let image_array = ndarray::ArrayView3::from_shape(
+        // Create ndarray with explicit strides for proper HWC layout
+        let image_array = ndarray::Array::from_shape_vec(
             (height, width, 3).strides((width * 3, 3, 1)),
-            data_slice
-        ).map_err(|e| format!("Failed to create ndarray view: {:?}", e))?
-        .to_owned(); // Convert to owned only if rerun requires ownership
+            self.data.data.clone()
+        ).map_err(|e| format!("Failed to create ndarray: {:?}", e))?;
 
         let image = rerun::Image::from_color_model_and_tensor(rerun::ColorModel::RGB, image_array)?;
         rec.log(entity_path, &image)?;
@@ -209,14 +206,11 @@ impl<'a> ImageFormatHandler for Rgba8888Handler<'a> {
         let width = self.data.width as usize;
         let height = self.data.height as usize;
 
-        // Use ArrayView to avoid cloning by creating a view that borrows the data
-        // Convert to owned array only when rerun requires it
-        let data_slice = &self.data.data;
-        let image_array = ndarray::ArrayView3::from_shape(
+        // Create ndarray with explicit strides for proper HWCA layout
+        let image_array = ndarray::Array::from_shape_vec(
             (height, width, 4).strides((width * 4, 4, 1)),
-            data_slice
-        ).map_err(|e| format!("Failed to create ndarray view: {:?}", e))?
-        .to_owned(); // Convert to owned only if rerun requires ownership
+            self.data.data.clone()
+        ).map_err(|e| format!("Failed to create ndarray: {:?}", e))?;
 
         let image = rerun::Image::from_color_model_and_tensor(rerun::ColorModel::RGBA, image_array)?;
         rec.log(entity_path, &image)?;
