@@ -295,12 +295,12 @@ impl<'a> ImageFormatHandler for Yuv420Handler<'a> {
         let log_duration = log_start.elapsed();
         println!("  📤 YUV420 rerun log call: {:.3}ms", log_duration.as_secs_f64() * 1000.0);
         
-        // Force flush rerun buffers to prevent memory accumulation
-        let flush_start = Instant::now();
-        rec.flush_blocking();
-        let flush_duration = flush_start.elapsed();
-        if flush_duration.as_millis() > 1 {
-            println!("  🚽 Rerun flush took: {:.3}ms", flush_duration.as_secs_f64() * 1000.0);
+        // Periodically flush rerun buffers (async, non-blocking) to prevent memory accumulation
+        static FLUSH_COUNTER: AtomicU32 = AtomicU32::new(0);
+        let flush_count = FLUSH_COUNTER.fetch_add(1, Ordering::Relaxed);
+        if flush_count % 10 == 0 {  // Flush every 10 frames instead of every frame
+            rec.flush_async();
+            println!("  🚽 Async flush triggered (non-blocking)");
         }
         
         let total_duration = total_start.elapsed();
