@@ -151,7 +151,7 @@ impl<'a> ImageFormatHandler for Yuv420Handler<'a> {
         rec.log(entity_path, &image)?;
 
         // Force immediate flush to prevent buffering buildup
-        rec.flush_blocking();
+        rec.flush_async();
 
         // Debug: Monitor RecordingStream state every 20 frames
         static RGB_FRAME_COUNT: AtomicU32 = AtomicU32::new(0);
@@ -251,7 +251,7 @@ impl<'a> ImageFormatHandler for Rgb888Handler<'a> {
         rec.log(entity_path, &image)?;
 
         // Force immediate flush to prevent buffering buildup
-        rec.flush_blocking();
+        rec.flush_async();
 
         // Debug: Monitor RecordingStream state every 20 frames
         static YUV420_FRAME_COUNT: AtomicU32 = AtomicU32::new(0);
@@ -301,7 +301,7 @@ impl<'a> ImageFormatHandler for Rgba8888Handler<'a> {
         rec.log(entity_path, &image)?;
 
         // Force immediate flush to prevent buffering buildup
-        rec.flush_blocking();
+        rec.flush_async();
 
         // Debug: Monitor RecordingStream state every 20 frames
         static RGBA_FRAME_COUNT: AtomicU32 = AtomicU32::new(0);
