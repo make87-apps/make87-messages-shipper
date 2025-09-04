@@ -292,7 +292,7 @@ impl<'a> ImageFormatHandler for Yuv420Handler<'a> {
 
         let log_start = Instant::now();
         println!("  🎯 About to log YUV420 image to entity: '{}', data size: {} bytes", entity_path, data_size);
-        match rec.log(&entity_path, &image) {
+        match rec.log(entity_path.clone(), &image) {
             Ok(()) => {
                 let log_duration = log_start.elapsed();
                 println!("  ✅ YUV420 rerun log SUCCESS: {:.3}ms", log_duration.as_secs_f64() * 1000.0);
@@ -376,7 +376,7 @@ impl<'a> ImageFormatHandler for Rgb888Handler<'a> {
         let log_start = Instant::now();
         let data_size = self.data.data.len();
         println!("  🎯 About to log RGB888 image to entity: '{}', data size: {} bytes", entity_path, data_size);
-        match rec.log(&entity_path, &image) {
+        match rec.log(entity_path.clone(), &image) {
             Ok(()) => {
                 let log_duration = log_start.elapsed();
                 println!("  ✅ RGB888 rerun log SUCCESS: {:.3}ms", log_duration.as_secs_f64() * 1000.0);
@@ -439,7 +439,7 @@ impl<'a> ImageFormatHandler for Rgba8888Handler<'a> {
         let log_start = Instant::now();
         let data_size = self.data.data.len();
         println!("  🎯 About to log RGBA8888 image to entity: '{}', data size: {} bytes", entity_path, data_size);
-        match rec.log(&entity_path, &image) {
+        match rec.log(entity_path.clone(), &image) {
             Ok(()) => {
                 let log_duration = log_start.elapsed();
                 println!("  ✅ RGBA8888 rerun log SUCCESS: {:.3}ms", log_duration.as_secs_f64() * 1000.0);
@@ -503,7 +503,7 @@ impl<'a> ImageFormatHandler for Nv12Handler<'a> {
         let log_start = Instant::now();
         let data_size = self.data.data.len();
         println!("  🎯 About to log NV12 image to entity: '{}', data size: {} bytes", entity_path, data_size);
-        match rec.log(&entity_path, &image) {
+        match rec.log(entity_path.clone(), &image) {
             Ok(()) => {
                 let log_duration = log_start.elapsed();
                 println!("  ✅ NV12 rerun log SUCCESS: {:.3}ms", log_duration.as_secs_f64() * 1000.0);
