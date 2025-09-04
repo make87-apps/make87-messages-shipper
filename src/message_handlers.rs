@@ -156,14 +156,15 @@ impl<'a> ImageFormatHandler for Yuv420Handler<'a> {
         // Debug: Monitor RecordingStream state every 20 frames
         static RGB_FRAME_COUNT: AtomicU32 = AtomicU32::new(0);
         let frame_num = RGB_FRAME_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+        println!("🔍 RGB888 Frame {} processed", frame_num);
         if frame_num % 20 == 0 {
-            log::warn!(
-                "RGB888 - Frame {}: RecordingStream ref_count={}, enabled={}",
+            println!(
+                "🔍 RGB888 - Frame {}: RecordingStream ref_count={}, enabled={}",
                 frame_num,
                 rec.ref_count(),
                 rec.is_enabled()
             );
-            log::warn!("{:?}", rec.store_info());
+            println!("📊 RGB888 - Store info: {:?}", rec.store_info());
         }
 
         Ok(())
@@ -256,13 +257,13 @@ impl<'a> ImageFormatHandler for Rgb888Handler<'a> {
         static YUV420_FRAME_COUNT: AtomicU32 = AtomicU32::new(0);
         let frame_num = YUV420_FRAME_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
         if frame_num % 20 == 0 {
-            log::warn!(
-                "YUV420 - Frame {}: RecordingStream ref_count={}, enabled={}",
+            println!(
+                "🔍 YUV420 - Frame {}: RecordingStream ref_count={}, enabled={}",
                 frame_num,
                 rec.ref_count(),
                 rec.is_enabled()
             );
-            log::warn!("{:?}", rec.store_info());
+            println!("📊 YUV420 - Store info: {:?}", rec.store_info());
         }
 
         Ok(())
@@ -306,13 +307,13 @@ impl<'a> ImageFormatHandler for Rgba8888Handler<'a> {
         static RGBA_FRAME_COUNT: AtomicU32 = AtomicU32::new(0);
         let frame_num = RGBA_FRAME_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
         if frame_num % 20 == 0 {
-            log::warn!(
-                "RGBA8888 - Frame {}: RecordingStream ref_count={}, enabled={}",
+            println!(
+                "🔍 RGBA8888 - Frame {}: RecordingStream ref_count={}, enabled={}",
                 frame_num,
                 rec.ref_count(),
                 rec.is_enabled()
             );
-            log::warn!("{:?}", rec.store_info());
+            println!("📊 RGBA8888 - Store info: {:?}", rec.store_info());
         }
 
         Ok(())
