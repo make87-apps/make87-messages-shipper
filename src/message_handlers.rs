@@ -7,7 +7,7 @@ use make87_messages::image::uncompressed::{
     image_raw_any, ImageRawAny, ImageRgb888, ImageRgba8888, ImageYuv420,
 };
 use make87_messages::text::PlainText;
-use ndarray::ShapeBuilder as _;
+// Removed ndarray import - no longer needed with rerun's native pixel formats
 use regex::Regex;
 use std::collections::HashMap;
 use std::error::Error;
@@ -239,36 +239,28 @@ impl<'a> ImageFormatHandler for Yuv420Handler<'a> {
         rec: &rerun::RecordingStream,
     ) -> Result<(), Box<dyn Error>> {
         let total_start = Instant::now();
+        println!("  🚀 Processing YUV420 frame with native rerun format ({}x{})", self.data.width, self.data.height);
         
-        let width = self.data.width as usize;
-        let height = self.data.height as usize;
+        let width = self.data.width;
+        let height = self.data.height;
 
-        // Convert YUV420 to RGB
-        let yuv_start = Instant::now();
-        let rgb_data = yuv420_to_rgb_with_yuvutils(&self.data.data, width, height)?;
-        let yuv_duration = yuv_start.elapsed();
-        println!("  🎨 YUV420→RGB conversion: {:.3}ms", yuv_duration.as_secs_f64() * 1000.0);
-
-        // Create ndarray with explicit strides for proper HWC layout
-        let array_start = Instant::now();
-        let image_array =
-            ndarray::Array::from_shape_vec((height, width, 3).strides((width * 3, 3, 1)), rgb_data)
-                .map_err(|e| format!("Failed to create ndarray: {:?}", e))?;
-        let array_duration = array_start.elapsed();
-        println!("  📊 ndarray creation: {:.3}ms", array_duration.as_secs_f64() * 1000.0);
-
+        // Use rerun's native YUV420 pixel format - no conversion needed!
         let image_start = Instant::now();
-        let image = rerun::Image::from_color_model_and_tensor(rerun::ColorModel::RGB, image_array)?;
+        let image = rerun::Image::from_pixel_format(
+            [width, height],
+            rerun::PixelFormat::Y_U_V12_LimitedRange,
+            self.data.data.clone(),
+        );
         let image_duration = image_start.elapsed();
-        println!("  🖼️  rerun::Image creation: {:.3}ms", image_duration.as_secs_f64() * 1000.0);
+        println!("  🖼️  Native YUV420 rerun::Image creation: {:.3}ms", image_duration.as_secs_f64() * 1000.0);
 
         let log_start = Instant::now();
         rec.log(entity_path, &image)?;
         let log_duration = log_start.elapsed();
-        println!("  📤 rerun log call: {:.3}ms", log_duration.as_secs_f64() * 1000.0);
+        println!("  📤 YUV420 rerun log call: {:.3}ms", log_duration.as_secs_f64() * 1000.0);
         
         let total_duration = total_start.elapsed();
-        println!("  ⏱️  Total YUV420 processing: {:.3}ms", total_duration.as_secs_f64() * 1000.0);
+        println!("  ⏱️  Total native YUV420 processing: {:.3}ms", total_duration.as_secs_f64() * 1000.0);
 
         // Debug: Monitor RecordingStream state every 20 frames
         static RGB_FRAME_COUNT: AtomicU32 = AtomicU32::new(0);
@@ -296,54 +288,8 @@ impl<'a> ImageFormatHandler for Yuv420Handler<'a> {
     }
 }
 
-// YUV420 to RGB conversion using yuvutils-rs
-fn yuv420_to_rgb_with_yuvutils(
-    yuv_data: &[u8],
-    width: usize,
-    height: usize,
-) -> Result<Vec<u8>, Box<dyn Error>> {
-    let y_size = width * height;
-    let uv_size = y_size / 4;
-    let expected_total_size = y_size + 2 * uv_size;
-
-    if yuv_data.len() < expected_total_size {
-        return Err(format!(
-            "Insufficient YUV420 data: expected {}, got {}",
-            expected_total_size,
-            yuv_data.len()
-        )
-        .into());
-    }
-
-    let y_plane = &yuv_data[0..y_size];
-    let u_plane = &yuv_data[y_size..y_size + uv_size];
-    let v_plane = &yuv_data[y_size + uv_size..y_size + 2 * uv_size];
-
-    let yuv_planar = yuvutils_rs::YuvPlanarImage {
-        y_plane,
-        y_stride: width as u32,
-        u_plane,
-        u_stride: (width / 2) as u32,
-        v_plane,
-        v_stride: (width / 2) as u32,
-        width: width as u32,
-        height: height as u32,
-    };
-
-    let mut rgb_data = vec![0u8; width * height * 3];
-
-    // Use Limited range with Bt709 matrix (most common for modern video)
-    yuvutils_rs::yuv420_to_rgb(
-        &yuv_planar,
-        &mut rgb_data,
-        width as u32 * 3,
-        yuvutils_rs::YuvRange::Limited,
-        yuvutils_rs::YuvStandardMatrix::Bt709,
-    )
-    .map_err(|e| format!("YUV420 to RGB conversion failed: {:?}", e))?;
-
-    Ok(rgb_data)
-}
+// Note: Removed expensive YUV420 to RGB conversion function
+// Now using rerun's native pixel format support for zero-copy performance!
 
 struct Rgb888Handler<'a> {
     data: &'a ImageRgb888,
@@ -356,28 +302,19 @@ impl<'a> ImageFormatHandler for Rgb888Handler<'a> {
         rec: &rerun::RecordingStream,
     ) -> Result<(), Box<dyn Error>> {
         let total_start = Instant::now();
-        println!("  📸 Processing RGB888 frame ({}x{})", self.data.width, self.data.height);
+        println!("  🚀 Processing RGB888 frame with native rerun format ({}x{})", self.data.width, self.data.height);
         
-        let width = self.data.width as usize;
-        let height = self.data.height as usize;
+        let width = self.data.width;
+        let height = self.data.height;
 
-        // Create ndarray with explicit strides for proper HWC layout - zero copy
-        let array_start = Instant::now();
-        let image_view = ndarray::ArrayView3::from_shape(
-            (height, width, 3).strides((width * 3, 3, 1)),
-            &self.data.data,
-        )
-        .map_err(|e| format!("Failed to create ndarray: {:?}", e))?;
-        let array_duration = array_start.elapsed();
-        println!("  📊 RGB888 ndarray view: {:.3}ms", array_duration.as_secs_f64() * 1000.0);
-
+        // Use rerun's native RGB888 format - zero copy!
         let image_start = Instant::now();
-        let image = rerun::Image::from_color_model_and_tensor(
-            rerun::ColorModel::RGB,
-            image_view.to_owned(),
-        )?;
+        let image = rerun::Image::new(
+            self.data.data.clone(), 
+            rerun::ImageFormat::rgb8([width, height])
+        );
         let image_duration = image_start.elapsed();
-        println!("  🖼️  RGB888 rerun::Image creation: {:.3}ms", image_duration.as_secs_f64() * 1000.0);
+        println!("  🖼️  Native RGB888 rerun::Image creation: {:.3}ms", image_duration.as_secs_f64() * 1000.0);
 
         let log_start = Instant::now();
         rec.log(entity_path, &image)?;
@@ -385,7 +322,7 @@ impl<'a> ImageFormatHandler for Rgb888Handler<'a> {
         println!("  📤 RGB888 rerun log call: {:.3}ms", log_duration.as_secs_f64() * 1000.0);
         
         let total_duration = total_start.elapsed();
-        println!("  ⏱️  Total RGB888 processing: {:.3}ms", total_duration.as_secs_f64() * 1000.0);
+        println!("  ⏱️  Total native RGB888 processing: {:.3}ms", total_duration.as_secs_f64() * 1000.0);
 
         // Debug: Monitor RecordingStream state every 20 frames
         static YUV420_FRAME_COUNT: AtomicU32 = AtomicU32::new(0);
@@ -418,21 +355,28 @@ impl<'a> ImageFormatHandler for Rgba8888Handler<'a> {
         entity_path: String,
         rec: &rerun::RecordingStream,
     ) -> Result<(), Box<dyn Error>> {
-        let width = self.data.width as usize;
-        let height = self.data.height as usize;
+        let total_start = Instant::now();
+        println!("  🚀 Processing RGBA8888 frame with native rerun format ({}x{})", self.data.width, self.data.height);
+        
+        let width = self.data.width;
+        let height = self.data.height;
 
-        // Create ndarray with explicit strides for proper HWCA layout - zero copy
-        let image_view = ndarray::ArrayView3::from_shape(
-            (height, width, 4).strides((width * 4, 4, 1)),
-            &self.data.data,
-        )
-        .map_err(|e| format!("Failed to create ndarray: {:?}", e))?;
+        // Use rerun's native RGBA8888 format - zero copy!
+        let image_start = Instant::now();
+        let image = rerun::Image::new(
+            self.data.data.clone(),
+            rerun::ImageFormat::rgba8([width, height])
+        );
+        let image_duration = image_start.elapsed();
+        println!("  🖼️  Native RGBA8888 rerun::Image creation: {:.3}ms", image_duration.as_secs_f64() * 1000.0);
 
-        let image = rerun::Image::from_color_model_and_tensor(
-            rerun::ColorModel::RGBA,
-            image_view.to_owned(),
-        )?;
+        let log_start = Instant::now();
         rec.log(entity_path, &image)?;
+        let log_duration = log_start.elapsed();
+        println!("  📤 RGBA8888 rerun log call: {:.3}ms", log_duration.as_secs_f64() * 1000.0);
+        
+        let total_duration = total_start.elapsed();
+        println!("  ⏱️  Total native RGBA8888 processing: {:.3}ms", total_duration.as_secs_f64() * 1000.0);
 
         // Debug: Monitor RecordingStream state every 20 frames
         static RGBA_FRAME_COUNT: AtomicU32 = AtomicU32::new(0);
