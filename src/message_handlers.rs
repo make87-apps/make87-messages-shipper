@@ -143,6 +143,21 @@ impl MessageHandler for ImageCompressedJpegHandler {
         rec: &rerun::RecordingStream,
     ) -> Result<(), Box<dyn Error>> {
         let message_decoded = self.encoder.decode(&sample.payload().to_bytes())?;
+
+        // Print timestamp from header to check camera timing
+        if let Some(header) = &message_decoded.header {
+            if let Some(timestamp) = &header.timestamp {
+                println!(
+                    "🕐 Camera timestamp: {}",
+                    format_timestamp_human_readable(timestamp)
+                );
+            } else {
+                println!("🕐 No timestamp in header");
+            }
+        } else {
+            println!("🕐 No header in message");
+        }
+
         let (entity_path, _header_time) = process_header_and_set_time(&message_decoded.header, rec);
         rec.log(
             entity_path,
@@ -383,6 +398,21 @@ impl MessageHandler for ImageRawAnyHandler {
         rec: &rerun::RecordingStream,
     ) -> Result<(), Box<dyn Error>> {
         let message_decoded = self.encoder.decode(&sample.payload().to_bytes())?;
+
+        // Print timestamp from header to check camera timing
+        if let Some(header) = &message_decoded.header {
+            if let Some(timestamp) = &header.timestamp {
+                println!(
+                    "🕐 Camera timestamp: {}",
+                    format_timestamp_human_readable(timestamp)
+                );
+            } else {
+                println!("🕐 No timestamp in header");
+            }
+        } else {
+            println!("🕐 No header in message");
+        }
+
         let (entity_path, _header_time) = process_header_and_set_time(&message_decoded.header, rec);
 
         // Handle the one-of field properly
