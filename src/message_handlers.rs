@@ -41,6 +41,26 @@ fn format_timestamp_human_readable(ts: &Timestamp) -> String {
     }
 }
 
+fn format_wallclock_time() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(d) => {
+            let millis = d.as_millis();
+            let seconds = d.as_secs();
+            let ms_part = millis % 1000;
+
+            // Format as HH:MM:SS.mmm
+            let hours = (seconds / 3600) % 24;
+            let minutes = (seconds / 60) % 60;
+            let secs = seconds % 60;
+
+            format!("{:02}:{:02}:{:02}.{:03}", hours, minutes, secs, ms_part)
+        }
+        Err(_) => "Invalid wallclock time".to_string(),
+    }
+}
+
 fn get_current_timestamp_secs() -> f64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -107,14 +127,15 @@ impl MessageHandler for TextPlainTextHandler {
         if let Some(header) = &message_decoded.header {
             if let Some(timestamp) = &header.timestamp {
                 println!(
-                    "🕐 Camera timestamp: {}",
-                    format_timestamp_human_readable(timestamp)
+                    "🕐 Camera timestamp: {} | Wallclock: {}",
+                    format_timestamp_human_readable(timestamp),
+                    format_wallclock_time()
                 );
             } else {
-                println!("🕐 No timestamp in header");
+                println!("🕐 No timestamp in header | Wallclock: {}", format_wallclock_time());
             }
         } else {
-            println!("🕐 No header in message");
+            println!("🕐 No header in message | Wallclock: {}", format_wallclock_time());
         }
 
         let (entity_path, _header_time) = process_header_and_set_time(&message_decoded.header, rec);
@@ -148,14 +169,15 @@ impl MessageHandler for ImageCompressedJpegHandler {
         if let Some(header) = &message_decoded.header {
             if let Some(timestamp) = &header.timestamp {
                 println!(
-                    "🕐 Camera timestamp: {}",
-                    format_timestamp_human_readable(timestamp)
+                    "🕐 Camera timestamp: {} | Wallclock: {}",
+                    format_timestamp_human_readable(timestamp),
+                    format_wallclock_time()
                 );
             } else {
-                println!("🕐 No timestamp in header");
+                println!("🕐 No timestamp in header | Wallclock: {}", format_wallclock_time());
             }
         } else {
-            println!("🕐 No header in message");
+            println!("🕐 No header in message | Wallclock: {}", format_wallclock_time());
         }
 
         let (entity_path, _header_time) = process_header_and_set_time(&message_decoded.header, rec);
@@ -403,14 +425,15 @@ impl MessageHandler for ImageRawAnyHandler {
         if let Some(header) = &message_decoded.header {
             if let Some(timestamp) = &header.timestamp {
                 println!(
-                    "🕐 Camera timestamp: {}",
-                    format_timestamp_human_readable(timestamp)
+                    "🕐 Camera timestamp: {} | Wallclock: {}",
+                    format_timestamp_human_readable(timestamp),
+                    format_wallclock_time()
                 );
             } else {
-                println!("🕐 No timestamp in header");
+                println!("🕐 No timestamp in header | Wallclock: {}", format_wallclock_time());
             }
         } else {
-            println!("🕐 No header in message");
+            println!("🕐 No header in message | Wallclock: {}", format_wallclock_time());
         }
 
         let (entity_path, _header_time) = process_header_and_set_time(&message_decoded.header, rec);
