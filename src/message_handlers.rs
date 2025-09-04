@@ -11,7 +11,7 @@ use make87_messages::text::PlainText;
 use regex::Regex;
 use std::collections::HashMap;
 use std::error::Error;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -19,6 +19,41 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 static LAST_CAMERA_TIMESTAMP: Mutex<Option<f64>> = Mutex::new(None);
 static TOTAL_FRAMES_RECEIVED: AtomicU32 = AtomicU32::new(0);
 static TOTAL_FRAMES_DROPPED: AtomicU32 = AtomicU32::new(0);
+
+// Memory tracking
+static TOTAL_BYTES_PROCESSED: AtomicUsize = AtomicUsize::new(0);
+
+fn get_process_memory_mb() -> Result<f64, Box<dyn Error>> {
+    use std::fs;
+    let status = fs::read_to_string("/proc/self/status")?;
+    for line in status.lines() {
+        if line.starts_with("VmRSS:") {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 2 {
+                if let Ok(kb) = parts[1].parse::<f64>() {
+                    return Ok(kb / 1024.0); // Convert KB to MB
+                }
+            }
+        }
+    }
+    Err("Could not parse memory usage".into())
+}
+
+fn log_memory_usage(frame_count: u32, data_size: usize) {
+    let total_bytes = TOTAL_BYTES_PROCESSED.fetch_add(data_size, Ordering::Relaxed) + data_size;
+    if frame_count % 20 == 0 {
+        match get_process_memory_mb() {
+            Ok(memory_mb) => {
+                let total_gb = total_bytes as f64 / 1_073_741_824.0; // Convert to GB
+                println!("🧠 Memory: {:.1}MB RSS | {:.2}GB processed | Avg {:.1}MB/frame", 
+                    memory_mb, total_gb, total_gb * 1024.0 / frame_count as f64);
+            }
+            Err(_) => {
+                println!("🧠 Memory tracking unavailable (non-Linux system)");
+            }
+        }
+    }
+}
 
 fn timestamp_to_secs_f64(ts: &Timestamp) -> f64 {
     ts.seconds as f64 + (ts.nanos as f64 / 1_000_000_000.0)
@@ -244,12 +279,13 @@ impl<'a> ImageFormatHandler for Yuv420Handler<'a> {
         let width = self.data.width;
         let height = self.data.height;
 
-        // Use rerun's native YUV420 pixel format - no conversion needed!
+        // Use rerun's native YUV420 pixel format - avoid cloning data!
+        let data_size = self.data.data.len();
         let image_start = Instant::now();
         let image = rerun::Image::from_pixel_format(
             [width, height],
             rerun::PixelFormat::Y_U_V12_LimitedRange,
-            self.data.data.clone(),
+            &self.data.data[..], // Use slice instead of clone to avoid memory copy
         );
         let image_duration = image_start.elapsed();
         println!("  🖼️  Native YUV420 rerun::Image creation: {:.3}ms", image_duration.as_secs_f64() * 1000.0);
@@ -259,25 +295,37 @@ impl<'a> ImageFormatHandler for Yuv420Handler<'a> {
         let log_duration = log_start.elapsed();
         println!("  📤 YUV420 rerun log call: {:.3}ms", log_duration.as_secs_f64() * 1000.0);
         
+        // Force flush rerun buffers to prevent memory accumulation
+        let flush_start = Instant::now();
+        rec.flush_blocking();
+        let flush_duration = flush_start.elapsed();
+        if flush_duration.as_millis() > 1 {
+            println!("  🚽 Rerun flush took: {:.3}ms", flush_duration.as_secs_f64() * 1000.0);
+        }
+        
         let total_duration = total_start.elapsed();
         println!("  ⏱️  Total native YUV420 processing: {:.3}ms", total_duration.as_secs_f64() * 1000.0);
 
         // Debug: Monitor RecordingStream state every 20 frames
         static RGB_FRAME_COUNT: AtomicU32 = AtomicU32::new(0);
         let frame_num = RGB_FRAME_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
-        println!("🔍 RGB888 Frame {} processed", frame_num);
+        println!("🔍 YUV420 Frame {} processed", frame_num);
+        
+        // Log memory usage
+        log_memory_usage(frame_num, data_size);
+        
         if frame_num % 20 == 0 {
             let frames_received = TOTAL_FRAMES_RECEIVED.load(Ordering::Relaxed);
             let frames_dropped = TOTAL_FRAMES_DROPPED.load(Ordering::Relaxed);
             let drop_rate = if frames_received > 0 { (frames_dropped as f32 / (frames_received + frames_dropped) as f32) * 100.0 } else { 0.0 };
             println!(
-                "🔍 RGB888 - Frame {}: RecordingStream ref_count={}, enabled={}, Drop rate: {:.1}%",
+                "🔍 YUV420 - Frame {}: RecordingStream ref_count={}, enabled={}, Drop rate: {:.1}%",
                 frame_num,
                 rec.ref_count(),
                 rec.is_enabled(),
                 drop_rate
             );
-            println!("📊 RGB888 - Store info: {:?}", rec.store_info());
+            println!("📊 YUV420 - Store info: {:?}", rec.store_info());
         }
 
         Ok(())
@@ -307,10 +355,10 @@ impl<'a> ImageFormatHandler for Rgb888Handler<'a> {
         let width = self.data.width;
         let height = self.data.height;
 
-        // Use rerun's native RGB888 format - zero copy!
+        // Use rerun's native RGB888 format - avoid cloning!
         let image_start = Instant::now();
         let image = rerun::Image::new(
-            self.data.data.clone(), 
+            &self.data.data[..], // Use slice instead of clone
             rerun::ImageFormat::rgb8([width, height])
         );
         let image_duration = image_start.elapsed();
@@ -361,10 +409,10 @@ impl<'a> ImageFormatHandler for Rgba8888Handler<'a> {
         let width = self.data.width;
         let height = self.data.height;
 
-        // Use rerun's native RGBA8888 format - zero copy!
+        // Use rerun's native RGBA8888 format - avoid cloning!
         let image_start = Instant::now();
         let image = rerun::Image::new(
-            self.data.data.clone(),
+            &self.data.data[..], // Use slice instead of clone
             rerun::ImageFormat::rgba8([width, height])
         );
         let image_duration = image_start.elapsed();
@@ -415,12 +463,12 @@ impl<'a> ImageFormatHandler for Nv12Handler<'a> {
         let width = self.data.width;
         let height = self.data.height;
 
-        // Use rerun's native NV12 pixel format - no conversion needed!
+        // Use rerun's native NV12 pixel format - avoid cloning!
         let image_start = Instant::now();
         let image = rerun::Image::from_pixel_format(
             [width, height],
             rerun::PixelFormat::NV12,
-            self.data.data.clone(),
+            &self.data.data[..], // Use slice instead of clone
         );
         let image_duration = image_start.elapsed();
         println!("  🖼️  Native NV12 rerun::Image creation: {:.3}ms", image_duration.as_secs_f64() * 1000.0);
