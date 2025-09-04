@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 // Global state for frame drop detection
 static LAST_CAMERA_TIMESTAMP: Mutex<Option<f64>> = Mutex::new(None);
@@ -238,19 +238,37 @@ impl<'a> ImageFormatHandler for Yuv420Handler<'a> {
         entity_path: String,
         rec: &rerun::RecordingStream,
     ) -> Result<(), Box<dyn Error>> {
+        let total_start = Instant::now();
+        
         let width = self.data.width as usize;
         let height = self.data.height as usize;
 
         // Convert YUV420 to RGB
+        let yuv_start = Instant::now();
         let rgb_data = yuv420_to_rgb_with_yuvutils(&self.data.data, width, height)?;
+        let yuv_duration = yuv_start.elapsed();
+        println!("  🎨 YUV420→RGB conversion: {:.3}ms", yuv_duration.as_secs_f64() * 1000.0);
 
         // Create ndarray with explicit strides for proper HWC layout
+        let array_start = Instant::now();
         let image_array =
             ndarray::Array::from_shape_vec((height, width, 3).strides((width * 3, 3, 1)), rgb_data)
                 .map_err(|e| format!("Failed to create ndarray: {:?}", e))?;
+        let array_duration = array_start.elapsed();
+        println!("  📊 ndarray creation: {:.3}ms", array_duration.as_secs_f64() * 1000.0);
 
+        let image_start = Instant::now();
         let image = rerun::Image::from_color_model_and_tensor(rerun::ColorModel::RGB, image_array)?;
+        let image_duration = image_start.elapsed();
+        println!("  🖼️  rerun::Image creation: {:.3}ms", image_duration.as_secs_f64() * 1000.0);
+
+        let log_start = Instant::now();
         rec.log(entity_path, &image)?;
+        let log_duration = log_start.elapsed();
+        println!("  📤 rerun log call: {:.3}ms", log_duration.as_secs_f64() * 1000.0);
+        
+        let total_duration = total_start.elapsed();
+        println!("  ⏱️  Total YUV420 processing: {:.3}ms", total_duration.as_secs_f64() * 1000.0);
 
         // Debug: Monitor RecordingStream state every 20 frames
         static RGB_FRAME_COUNT: AtomicU32 = AtomicU32::new(0);
@@ -337,21 +355,37 @@ impl<'a> ImageFormatHandler for Rgb888Handler<'a> {
         entity_path: String,
         rec: &rerun::RecordingStream,
     ) -> Result<(), Box<dyn Error>> {
+        let total_start = Instant::now();
+        println!("  📸 Processing RGB888 frame ({}x{})", self.data.width, self.data.height);
+        
         let width = self.data.width as usize;
         let height = self.data.height as usize;
 
         // Create ndarray with explicit strides for proper HWC layout - zero copy
+        let array_start = Instant::now();
         let image_view = ndarray::ArrayView3::from_shape(
             (height, width, 3).strides((width * 3, 3, 1)),
             &self.data.data,
         )
         .map_err(|e| format!("Failed to create ndarray: {:?}", e))?;
+        let array_duration = array_start.elapsed();
+        println!("  📊 RGB888 ndarray view: {:.3}ms", array_duration.as_secs_f64() * 1000.0);
 
+        let image_start = Instant::now();
         let image = rerun::Image::from_color_model_and_tensor(
             rerun::ColorModel::RGB,
             image_view.to_owned(),
         )?;
+        let image_duration = image_start.elapsed();
+        println!("  🖼️  RGB888 rerun::Image creation: {:.3}ms", image_duration.as_secs_f64() * 1000.0);
+
+        let log_start = Instant::now();
         rec.log(entity_path, &image)?;
+        let log_duration = log_start.elapsed();
+        println!("  📤 RGB888 rerun log call: {:.3}ms", log_duration.as_secs_f64() * 1000.0);
+        
+        let total_duration = total_start.elapsed();
+        println!("  ⏱️  Total RGB888 processing: {:.3}ms", total_duration.as_secs_f64() * 1000.0);
 
         // Debug: Monitor RecordingStream state every 20 frames
         static YUV420_FRAME_COUNT: AtomicU32 = AtomicU32::new(0);
@@ -450,7 +484,10 @@ impl MessageHandler for ImageRawAnyHandler {
         sample: &zenoh::sample::Sample,
         rec: &rerun::RecordingStream,
     ) -> Result<(), Box<dyn Error>> {
+        let decode_start = Instant::now();
         let message_decoded = self.encoder.decode(&sample.payload().to_bytes())?;
+        let decode_duration = decode_start.elapsed();
+        println!("  📦 Protobuf decode: {:.3}ms", decode_duration.as_secs_f64() * 1000.0);
 
         // Print timestamp from header to check camera timing and detect frame drops
         if let Some(header) = &message_decoded.header {
@@ -472,35 +509,41 @@ impl MessageHandler for ImageRawAnyHandler {
         let (entity_path, _header_time) = process_header_and_set_time(&message_decoded.header, rec);
 
         // Handle the one-of field properly
+        let dispatch_start = Instant::now();
         match &message_decoded.image {
             Some(image_raw_any::Image::Rgb888(rgb888)) => {
+                println!("  📋 Dispatching RGB888 format ({}x{})", rgb888.width, rgb888.height);
                 let handler = Rgb888Handler { data: rgb888 };
                 handle_image_format(&handler, entity_path, rec)?;
             }
             Some(image_raw_any::Image::Rgba8888(rgba8888)) => {
+                println!("  📋 Dispatching RGBA8888 format ({}x{})", rgba8888.width, rgba8888.height);
                 let handler = Rgba8888Handler { data: rgba8888 };
                 handle_image_format(&handler, entity_path, rec)?;
             }
             Some(image_raw_any::Image::Yuv420(yuv420)) => {
+                println!("  📋 Dispatching YUV420 format ({}x{})", yuv420.width, yuv420.height);
                 let handler = Yuv420Handler { data: yuv420 };
                 handle_image_format(&handler, entity_path, rec)?;
             }
             Some(image_raw_any::Image::Yuv422(_yuv422)) => {
-                // TODO: Add YUV422 handler
+                println!("  📋 YUV422 format not implemented");
                 log::warn!("YUV422 format not yet implemented");
             }
             Some(image_raw_any::Image::Yuv444(_yuv444)) => {
-                // TODO: Add YUV444 handler
+                println!("  📋 YUV444 format not implemented");
                 log::warn!("YUV444 format not yet implemented");
             }
             Some(image_raw_any::Image::Nv12(_nv12)) => {
-                // TODO: Add NV12 handler
+                println!("  📋 NV12 format not implemented");
                 log::warn!("NV12 format not yet implemented");
             }
             None => {
                 return Err("No image format found in ImageRawAny message".into());
             }
         }
+        let dispatch_duration = dispatch_start.elapsed();
+        println!("  ⚡ Image dispatch + processing: {:.3}ms", dispatch_duration.as_secs_f64() * 1000.0);
 
         Ok(())
     }
