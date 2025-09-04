@@ -4,7 +4,7 @@ use make87_messages::detection::r#box::Boxes2DAxisAligned;
 use make87_messages::google::protobuf::Timestamp;
 use make87_messages::image::compressed::ImageJpeg;
 use make87_messages::image::uncompressed::{
-    image_raw_any, ImageRawAny, ImageRgb888, ImageRgba8888, ImageYuv420,
+    image_raw_any, ImageRawAny, ImageNv12, ImageRgb888, ImageRgba8888, ImageYuv420,
 };
 use make87_messages::text::PlainText;
 // Removed ndarray import - no longer needed with rerun's native pixel formats
@@ -399,6 +399,65 @@ impl<'a> ImageFormatHandler for Rgba8888Handler<'a> {
     }
 }
 
+struct Nv12Handler<'a> {
+    data: &'a ImageNv12,
+}
+
+impl<'a> ImageFormatHandler for Nv12Handler<'a> {
+    fn log_to_rerun(
+        &self,
+        entity_path: String,
+        rec: &rerun::RecordingStream,
+    ) -> Result<(), Box<dyn Error>> {
+        let total_start = Instant::now();
+        println!("  🚀 Processing NV12 frame with native rerun format ({}x{})", self.data.width, self.data.height);
+        
+        let width = self.data.width;
+        let height = self.data.height;
+
+        // Use rerun's native NV12 pixel format - no conversion needed!
+        let image_start = Instant::now();
+        let image = rerun::Image::from_pixel_format(
+            [width, height],
+            rerun::PixelFormat::NV12,
+            self.data.data.clone(),
+        );
+        let image_duration = image_start.elapsed();
+        println!("  🖼️  Native NV12 rerun::Image creation: {:.3}ms", image_duration.as_secs_f64() * 1000.0);
+
+        let log_start = Instant::now();
+        rec.log(entity_path, &image)?;
+        let log_duration = log_start.elapsed();
+        println!("  📤 NV12 rerun log call: {:.3}ms", log_duration.as_secs_f64() * 1000.0);
+        
+        let total_duration = total_start.elapsed();
+        println!("  ⏱️  Total native NV12 processing: {:.3}ms", total_duration.as_secs_f64() * 1000.0);
+
+        // Debug: Monitor RecordingStream state every 20 frames
+        static NV12_FRAME_COUNT: AtomicU32 = AtomicU32::new(0);
+        let frame_num = NV12_FRAME_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+        if frame_num % 20 == 0 {
+            let frames_received = TOTAL_FRAMES_RECEIVED.load(Ordering::Relaxed);
+            let frames_dropped = TOTAL_FRAMES_DROPPED.load(Ordering::Relaxed);
+            let drop_rate = if frames_received > 0 { (frames_dropped as f32 / (frames_received + frames_dropped) as f32) * 100.0 } else { 0.0 };
+            println!(
+                "🔍 NV12 - Frame {}: RecordingStream ref_count={}, enabled={}, Drop rate: {:.1}%",
+                frame_num,
+                rec.ref_count(),
+                rec.is_enabled(),
+                drop_rate
+            );
+            println!("📊 NV12 - Store info: {:?}", rec.store_info());
+        }
+
+        Ok(())
+    }
+
+    fn get_format_name(&self) -> &'static str {
+        "NV12"
+    }
+}
+
 // Helper function to handle any image format
 fn handle_image_format(
     handler: &dyn ImageFormatHandler,
@@ -478,9 +537,10 @@ impl MessageHandler for ImageRawAnyHandler {
                 println!("  📋 YUV444 format not implemented");
                 log::warn!("YUV444 format not yet implemented");
             }
-            Some(image_raw_any::Image::Nv12(_nv12)) => {
-                println!("  📋 NV12 format not implemented");
-                log::warn!("NV12 format not yet implemented");
+            Some(image_raw_any::Image::Nv12(nv12)) => {
+                println!("  📋 Dispatching NV12 format ({}x{})", nv12.width, nv12.height);
+                let handler = Nv12Handler { data: nv12 };
+                handle_image_format(&handler, entity_path, rec)?;
             }
             None => {
                 return Err("No image format found in ImageRawAny message".into());
