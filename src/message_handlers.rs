@@ -4,7 +4,7 @@ use make87_messages::detection::r#box::Boxes2DAxisAligned;
 use make87_messages::google::protobuf::Timestamp;
 use make87_messages::image::compressed::ImageJpeg;
 use make87_messages::image::uncompressed::{
-    image_raw_any, ImageRawAny, ImageNv12, ImageRgb888, ImageRgba8888, ImageYuv420,
+    image_raw_any, ImageNv12, ImageRawAny, ImageRgb888, ImageRgba8888, ImageYuv420,
 };
 use make87_messages::text::PlainText;
 // Removed ndarray import - no longer needed with rerun's native pixel formats
@@ -45,8 +45,12 @@ fn log_memory_usage(frame_count: u32, data_size: usize) {
         match get_process_memory_mb() {
             Ok(memory_mb) => {
                 let total_gb = total_bytes as f64 / 1_073_741_824.0; // Convert to GB
-                println!("🧠 Memory: {:.1}MB RSS | {:.2}GB processed | Avg {:.1}MB/frame", 
-                    memory_mb, total_gb, total_gb * 1024.0 / frame_count as f64);
+                println!(
+                    "🧠 Memory: {:.1}MB RSS | {:.2}GB processed | Avg {:.1}MB/frame",
+                    memory_mb,
+                    total_gb,
+                    total_gb * 1024.0 / frame_count as f64
+                );
             }
             Err(_) => {
                 println!("🧠 Memory tracking unavailable (non-Linux system)");
@@ -111,7 +115,7 @@ fn get_current_timestamp_secs() -> f64 {
 
 fn detect_frame_drops(current_timestamp: f64) {
     let frames_received = TOTAL_FRAMES_RECEIVED.fetch_add(1, Ordering::Relaxed) + 1;
-    
+
     if let Ok(mut last_ts) = LAST_CAMERA_TIMESTAMP.lock() {
         if let Some(last) = *last_ts {
             let time_gap = current_timestamp - last;
@@ -120,8 +124,10 @@ fn detect_frame_drops(current_timestamp: f64) {
                 let expected_frames = (time_gap / 0.05).round() as u32;
                 let dropped_frames = expected_frames - 1; // -1 because we got the current frame
                 if dropped_frames > 0 {
-                    let total_dropped = TOTAL_FRAMES_DROPPED.fetch_add(dropped_frames, Ordering::Relaxed) + dropped_frames;
-                    println!("🚨 Frame drop detected! Gap: {:.3}s, Estimated drops: {}, Total dropped: {}, Total received: {}", 
+                    let total_dropped = TOTAL_FRAMES_DROPPED
+                        .fetch_add(dropped_frames, Ordering::Relaxed)
+                        + dropped_frames;
+                    println!("🚨 Frame drop detected! Gap: {:.3}s, Estimated drops: {}, Total dropped: {}, Total received: {}",
                         time_gap, dropped_frames, total_dropped, frames_received);
                 }
             }
@@ -194,10 +200,16 @@ impl MessageHandler for TextPlainTextHandler {
                     format_wallclock_time()
                 );
             } else {
-                println!("🕐 No timestamp in header | Wallclock: {}", format_wallclock_time());
+                println!(
+                    "🕐 No timestamp in header | Wallclock: {}",
+                    format_wallclock_time()
+                );
             }
         } else {
-            println!("🕐 No header in message | Wallclock: {}", format_wallclock_time());
+            println!(
+                "🕐 No header in message | Wallclock: {}",
+                format_wallclock_time()
+            );
         }
 
         let (entity_path, _header_time) = process_header_and_set_time(&message_decoded.header, rec);
@@ -236,10 +248,16 @@ impl MessageHandler for ImageCompressedJpegHandler {
                     format_wallclock_time()
                 );
             } else {
-                println!("🕐 No timestamp in header | Wallclock: {}", format_wallclock_time());
+                println!(
+                    "🕐 No timestamp in header | Wallclock: {}",
+                    format_wallclock_time()
+                );
             }
         } else {
-            println!("🕐 No header in message | Wallclock: {}", format_wallclock_time());
+            println!(
+                "🕐 No header in message | Wallclock: {}",
+                format_wallclock_time()
+            );
         }
 
         let (entity_path, _header_time) = process_header_and_set_time(&message_decoded.header, rec);
@@ -274,8 +292,11 @@ impl<'a> ImageFormatHandler for Yuv420Handler<'a> {
         rec: &rerun::RecordingStream,
     ) -> Result<(), Box<dyn Error>> {
         let total_start = Instant::now();
-        println!("  🚀 Processing YUV420 frame with native rerun format ({}x{})", self.data.width, self.data.height);
-        
+        println!(
+            "  🚀 Processing YUV420 frame with native rerun format ({}x{})",
+            self.data.width, self.data.height
+        );
+
         let width = self.data.width;
         let height = self.data.height;
 
@@ -288,45 +309,52 @@ impl<'a> ImageFormatHandler for Yuv420Handler<'a> {
             &self.data.data[..], // Use slice instead of clone to avoid memory copy
         );
         let image_duration = image_start.elapsed();
-        println!("  🖼️  Native YUV420 rerun::Image creation: {:.3}ms", image_duration.as_secs_f64() * 1000.0);
+        println!(
+            "  🖼️  Native YUV420 rerun::Image creation: {:.3}ms",
+            image_duration.as_secs_f64() * 1000.0
+        );
 
         let log_start = Instant::now();
-        println!("  🎯 About to log YUV420 image to entity: '{}', data size: {} bytes", entity_path, data_size);
+        println!(
+            "  🎯 About to log YUV420 image to entity: '{}', data size: {} bytes",
+            entity_path, data_size
+        );
         match rec.log(entity_path.clone(), &image) {
             Ok(()) => {
                 let log_duration = log_start.elapsed();
-                println!("  ✅ YUV420 rerun log SUCCESS: {:.3}ms", log_duration.as_secs_f64() * 1000.0);
+                println!(
+                    "  ✅ YUV420 rerun log SUCCESS: {:.3}ms",
+                    log_duration.as_secs_f64() * 1000.0
+                );
             }
             Err(e) => {
                 println!("  ❌ YUV420 rerun log FAILED: {}", e);
                 return Err(e.into());
             }
         }
-        
-        // Periodically flush rerun buffers (async, non-blocking) to prevent memory accumulation
-        static FLUSH_COUNTER: AtomicU32 = AtomicU32::new(0);
-        let flush_count = FLUSH_COUNTER.fetch_add(1, Ordering::Relaxed);
-        // Try async flush every frame - maybe async wasn't working because it wasn't frequent enough
-        rec.flush_async();
-        if flush_count % 20 == 0 {
-            println!("  🚽 Async flush called every frame (logged every 20 frames: {})", flush_count);
-        }
-        
+
         let total_duration = total_start.elapsed();
-        println!("  ⏱️  Total native YUV420 processing: {:.3}ms", total_duration.as_secs_f64() * 1000.0);
+        println!(
+            "  ⏱️  Total native YUV420 processing: {:.3}ms",
+            total_duration.as_secs_f64() * 1000.0
+        );
 
         // Debug: Monitor RecordingStream state every 20 frames
         static RGB_FRAME_COUNT: AtomicU32 = AtomicU32::new(0);
         let frame_num = RGB_FRAME_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
         println!("🔍 YUV420 Frame {} processed", frame_num);
-        
+
         // Log memory usage
         log_memory_usage(frame_num, data_size);
-        
+
         if frame_num % 20 == 0 {
             let frames_received = TOTAL_FRAMES_RECEIVED.load(Ordering::Relaxed);
             let frames_dropped = TOTAL_FRAMES_DROPPED.load(Ordering::Relaxed);
-            let drop_rate = if frames_received > 0 { (frames_dropped as f32 / (frames_received + frames_dropped) as f32) * 100.0 } else { 0.0 };
+            let drop_rate = if frames_received > 0 {
+                (frames_dropped as f32 / (frames_received + frames_dropped) as f32) * 100.0
+            } else {
+                0.0
+            };
             println!(
                 "🔍 YUV420 - Frame {}: RecordingStream ref_count={}, enabled={}, Drop rate: {:.1}%",
                 frame_num,
@@ -359,8 +387,11 @@ impl<'a> ImageFormatHandler for Rgb888Handler<'a> {
         rec: &rerun::RecordingStream,
     ) -> Result<(), Box<dyn Error>> {
         let total_start = Instant::now();
-        println!("  🚀 Processing RGB888 frame with native rerun format ({}x{})", self.data.width, self.data.height);
-        
+        println!(
+            "  🚀 Processing RGB888 frame with native rerun format ({}x{})",
+            self.data.width, self.data.height
+        );
+
         let width = self.data.width;
         let height = self.data.height;
 
@@ -368,27 +399,39 @@ impl<'a> ImageFormatHandler for Rgb888Handler<'a> {
         let image_start = Instant::now();
         let image = rerun::Image::new(
             &self.data.data[..], // Use slice instead of clone
-            rerun::ImageFormat::rgb8([width, height])
+            rerun::ImageFormat::rgb8([width, height]),
         );
         let image_duration = image_start.elapsed();
-        println!("  🖼️  Native RGB888 rerun::Image creation: {:.3}ms", image_duration.as_secs_f64() * 1000.0);
+        println!(
+            "  🖼️  Native RGB888 rerun::Image creation: {:.3}ms",
+            image_duration.as_secs_f64() * 1000.0
+        );
 
         let log_start = Instant::now();
         let data_size = self.data.data.len();
-        println!("  🎯 About to log RGB888 image to entity: '{}', data size: {} bytes", entity_path, data_size);
+        println!(
+            "  🎯 About to log RGB888 image to entity: '{}', data size: {} bytes",
+            entity_path, data_size
+        );
         match rec.log(entity_path.clone(), &image) {
             Ok(()) => {
                 let log_duration = log_start.elapsed();
-                println!("  ✅ RGB888 rerun log SUCCESS: {:.3}ms", log_duration.as_secs_f64() * 1000.0);
+                println!(
+                    "  ✅ RGB888 rerun log SUCCESS: {:.3}ms",
+                    log_duration.as_secs_f64() * 1000.0
+                );
             }
             Err(e) => {
                 println!("  ❌ RGB888 rerun log FAILED: {}", e);
                 return Err(e.into());
             }
         }
-        
+
         let total_duration = total_start.elapsed();
-        println!("  ⏱️  Total native RGB888 processing: {:.3}ms", total_duration.as_secs_f64() * 1000.0);
+        println!(
+            "  ⏱️  Total native RGB888 processing: {:.3}ms",
+            total_duration.as_secs_f64() * 1000.0
+        );
 
         // Debug: Monitor RecordingStream state every 20 frames
         static YUV420_FRAME_COUNT: AtomicU32 = AtomicU32::new(0);
@@ -422,8 +465,11 @@ impl<'a> ImageFormatHandler for Rgba8888Handler<'a> {
         rec: &rerun::RecordingStream,
     ) -> Result<(), Box<dyn Error>> {
         let total_start = Instant::now();
-        println!("  🚀 Processing RGBA8888 frame with native rerun format ({}x{})", self.data.width, self.data.height);
-        
+        println!(
+            "  🚀 Processing RGBA8888 frame with native rerun format ({}x{})",
+            self.data.width, self.data.height
+        );
+
         let width = self.data.width;
         let height = self.data.height;
 
@@ -431,27 +477,39 @@ impl<'a> ImageFormatHandler for Rgba8888Handler<'a> {
         let image_start = Instant::now();
         let image = rerun::Image::new(
             &self.data.data[..], // Use slice instead of clone
-            rerun::ImageFormat::rgba8([width, height])
+            rerun::ImageFormat::rgba8([width, height]),
         );
         let image_duration = image_start.elapsed();
-        println!("  🖼️  Native RGBA8888 rerun::Image creation: {:.3}ms", image_duration.as_secs_f64() * 1000.0);
+        println!(
+            "  🖼️  Native RGBA8888 rerun::Image creation: {:.3}ms",
+            image_duration.as_secs_f64() * 1000.0
+        );
 
         let log_start = Instant::now();
         let data_size = self.data.data.len();
-        println!("  🎯 About to log RGBA8888 image to entity: '{}', data size: {} bytes", entity_path, data_size);
+        println!(
+            "  🎯 About to log RGBA8888 image to entity: '{}', data size: {} bytes",
+            entity_path, data_size
+        );
         match rec.log(entity_path.clone(), &image) {
             Ok(()) => {
                 let log_duration = log_start.elapsed();
-                println!("  ✅ RGBA8888 rerun log SUCCESS: {:.3}ms", log_duration.as_secs_f64() * 1000.0);
+                println!(
+                    "  ✅ RGBA8888 rerun log SUCCESS: {:.3}ms",
+                    log_duration.as_secs_f64() * 1000.0
+                );
             }
             Err(e) => {
                 println!("  ❌ RGBA8888 rerun log FAILED: {}", e);
                 return Err(e.into());
             }
         }
-        
+
         let total_duration = total_start.elapsed();
-        println!("  ⏱️  Total native RGBA8888 processing: {:.3}ms", total_duration.as_secs_f64() * 1000.0);
+        println!(
+            "  ⏱️  Total native RGBA8888 processing: {:.3}ms",
+            total_duration.as_secs_f64() * 1000.0
+        );
 
         // Debug: Monitor RecordingStream state every 20 frames
         static RGBA_FRAME_COUNT: AtomicU32 = AtomicU32::new(0);
@@ -485,8 +543,11 @@ impl<'a> ImageFormatHandler for Nv12Handler<'a> {
         rec: &rerun::RecordingStream,
     ) -> Result<(), Box<dyn Error>> {
         let total_start = Instant::now();
-        println!("  🚀 Processing NV12 frame with native rerun format ({}x{})", self.data.width, self.data.height);
-        
+        println!(
+            "  🚀 Processing NV12 frame with native rerun format ({}x{})",
+            self.data.width, self.data.height
+        );
+
         let width = self.data.width;
         let height = self.data.height;
 
@@ -498,24 +559,36 @@ impl<'a> ImageFormatHandler for Nv12Handler<'a> {
             &self.data.data[..], // Use slice instead of clone
         );
         let image_duration = image_start.elapsed();
-        println!("  🖼️  Native NV12 rerun::Image creation: {:.3}ms", image_duration.as_secs_f64() * 1000.0);
+        println!(
+            "  🖼️  Native NV12 rerun::Image creation: {:.3}ms",
+            image_duration.as_secs_f64() * 1000.0
+        );
 
         let log_start = Instant::now();
         let data_size = self.data.data.len();
-        println!("  🎯 About to log NV12 image to entity: '{}', data size: {} bytes", entity_path, data_size);
+        println!(
+            "  🎯 About to log NV12 image to entity: '{}', data size: {} bytes",
+            entity_path, data_size
+        );
         match rec.log(entity_path.clone(), &image) {
             Ok(()) => {
                 let log_duration = log_start.elapsed();
-                println!("  ✅ NV12 rerun log SUCCESS: {:.3}ms", log_duration.as_secs_f64() * 1000.0);
+                println!(
+                    "  ✅ NV12 rerun log SUCCESS: {:.3}ms",
+                    log_duration.as_secs_f64() * 1000.0
+                );
             }
             Err(e) => {
                 println!("  ❌ NV12 rerun log FAILED: {}", e);
                 return Err(e.into());
             }
         }
-        
+
         let total_duration = total_start.elapsed();
-        println!("  ⏱️  Total native NV12 processing: {:.3}ms", total_duration.as_secs_f64() * 1000.0);
+        println!(
+            "  ⏱️  Total native NV12 processing: {:.3}ms",
+            total_duration.as_secs_f64() * 1000.0
+        );
 
         // Debug: Monitor RecordingStream state every 20 frames
         static NV12_FRAME_COUNT: AtomicU32 = AtomicU32::new(0);
@@ -523,7 +596,11 @@ impl<'a> ImageFormatHandler for Nv12Handler<'a> {
         if frame_num % 20 == 0 {
             let frames_received = TOTAL_FRAMES_RECEIVED.load(Ordering::Relaxed);
             let frames_dropped = TOTAL_FRAMES_DROPPED.load(Ordering::Relaxed);
-            let drop_rate = if frames_received > 0 { (frames_dropped as f32 / (frames_received + frames_dropped) as f32) * 100.0 } else { 0.0 };
+            let drop_rate = if frames_received > 0 {
+                (frames_dropped as f32 / (frames_received + frames_dropped) as f32) * 100.0
+            } else {
+                0.0
+            };
             println!(
                 "🔍 NV12 - Frame {}: RecordingStream ref_count={}, enabled={}, Drop rate: {:.1}%",
                 frame_num,
@@ -574,7 +651,10 @@ impl MessageHandler for ImageRawAnyHandler {
         let decode_start = Instant::now();
         let message_decoded = self.encoder.decode(&sample.payload().to_bytes())?;
         let decode_duration = decode_start.elapsed();
-        println!("  📦 Protobuf decode: {:.3}ms", decode_duration.as_secs_f64() * 1000.0);
+        println!(
+            "  📦 Protobuf decode: {:.3}ms",
+            decode_duration.as_secs_f64() * 1000.0
+        );
 
         // Print timestamp from header to check camera timing and detect frame drops
         if let Some(header) = &message_decoded.header {
@@ -587,10 +667,16 @@ impl MessageHandler for ImageRawAnyHandler {
                     format_wallclock_time()
                 );
             } else {
-                println!("🕐 No timestamp in header | Wallclock: {}", format_wallclock_time());
+                println!(
+                    "🕐 No timestamp in header | Wallclock: {}",
+                    format_wallclock_time()
+                );
             }
         } else {
-            println!("🕐 No header in message | Wallclock: {}", format_wallclock_time());
+            println!(
+                "🕐 No header in message | Wallclock: {}",
+                format_wallclock_time()
+            );
         }
 
         let (entity_path, _header_time) = process_header_and_set_time(&message_decoded.header, rec);
@@ -599,17 +685,26 @@ impl MessageHandler for ImageRawAnyHandler {
         let dispatch_start = Instant::now();
         match &message_decoded.image {
             Some(image_raw_any::Image::Rgb888(rgb888)) => {
-                println!("  📋 Dispatching RGB888 format ({}x{})", rgb888.width, rgb888.height);
+                println!(
+                    "  📋 Dispatching RGB888 format ({}x{})",
+                    rgb888.width, rgb888.height
+                );
                 let handler = Rgb888Handler { data: rgb888 };
                 handle_image_format(&handler, entity_path, rec)?;
             }
             Some(image_raw_any::Image::Rgba8888(rgba8888)) => {
-                println!("  📋 Dispatching RGBA8888 format ({}x{})", rgba8888.width, rgba8888.height);
+                println!(
+                    "  📋 Dispatching RGBA8888 format ({}x{})",
+                    rgba8888.width, rgba8888.height
+                );
                 let handler = Rgba8888Handler { data: rgba8888 };
                 handle_image_format(&handler, entity_path, rec)?;
             }
             Some(image_raw_any::Image::Yuv420(yuv420)) => {
-                println!("  📋 Dispatching YUV420 format ({}x{})", yuv420.width, yuv420.height);
+                println!(
+                    "  📋 Dispatching YUV420 format ({}x{})",
+                    yuv420.width, yuv420.height
+                );
                 let handler = Yuv420Handler { data: yuv420 };
                 handle_image_format(&handler, entity_path, rec)?;
             }
@@ -622,7 +717,10 @@ impl MessageHandler for ImageRawAnyHandler {
                 log::warn!("YUV444 format not yet implemented");
             }
             Some(image_raw_any::Image::Nv12(nv12)) => {
-                println!("  📋 Dispatching NV12 format ({}x{})", nv12.width, nv12.height);
+                println!(
+                    "  📋 Dispatching NV12 format ({}x{})",
+                    nv12.width, nv12.height
+                );
                 let handler = Nv12Handler { data: nv12 };
                 handle_image_format(&handler, entity_path, rec)?;
             }
@@ -631,7 +729,10 @@ impl MessageHandler for ImageRawAnyHandler {
             }
         }
         let dispatch_duration = dispatch_start.elapsed();
-        println!("  ⚡ Image dispatch + processing: {:.3}ms", dispatch_duration.as_secs_f64() * 1000.0);
+        println!(
+            "  ⚡ Image dispatch + processing: {:.3}ms",
+            dispatch_duration.as_secs_f64() * 1000.0
+        );
 
         Ok(())
     }
