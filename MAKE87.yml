@@ -52,7 +52,7 @@ interfaces:
                   type: integer
                   description: Number of rows to trigger batch flush
                   minimum: 0
-                  default: 18446744073709551615
+                  default: 1844
             flush_timeout:
               type: number
               description: Timeout in seconds for flush operations
