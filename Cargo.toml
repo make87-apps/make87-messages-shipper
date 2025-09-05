@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-make87 = { version = ">=0.2.1-dev3", features = ["zenoh", "protobuf", "rerun"] }
+make87 = { version = ">=0.2.2-dev1", features = ["zenoh", "protobuf", "rerun"] }
 make87_messages = ">=0.2.8"
 tokio = "1.44.1"
 log = "0.4.27"

@@ -4610,9 +4610,9 @@ dependencies = [
 
 [[package]]
 name = "make87"
-version = "0.2.1-dev3"
+version = "0.2.2-dev1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ba257fa993a86b4aadb8b4789f864d68744cf00840a6f5b54dbffbb3bf34277"
+checksum = "2d4ba38d825116221630ad5b7603ac702c69df3dfe141e05d846d9919f88d25b"
 dependencies = [
  "once_cell",
  "prost",

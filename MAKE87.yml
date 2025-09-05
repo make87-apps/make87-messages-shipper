@@ -32,6 +32,38 @@ interfaces:
       - name: rerun-grpc-client
         spec:
           string: rerun-grpc
+        config:
+          type: object
+          properties:
+            batcher_config:
+              type: object
+              description: Configuration for chunk batching
+              properties:
+                flush_tick:
+                  type: number
+                  format: float
+                  description: Time interval in seconds for flushing batches
+                  default: 0.008
+                flush_num_bytes:
+                  type: integer
+                  format: uint64
+                  description: Number of bytes to trigger batch flush
+                  minimum: 0
+                  default: 1048576
+                flush_num_rows:
+                  type: integer
+                  format: uint64
+                  description: Number of rows to trigger batch flush
+                  minimum: 0
+                  default: 18446744073709551615
+            flush_timeout:
+              type: number
+              format: float
+              description: Timeout in seconds for flush operations
+              minimum: 0
+              nullable: true
+              default: 3.0
+
 build:
   build_kit:
     name: rust
