@@ -42,23 +42,15 @@ interfaces:
                 flush_tick:
                   type: number
                   description: Time interval in seconds for flushing batches
-                  default: 0.008
                 flush_num_bytes:
                   type: integer
                   description: Number of bytes to trigger batch flush
-                  minimum: 0
-                  default: 1048576
                 flush_num_rows:
                   type: integer
                   description: Number of rows to trigger batch flush
-                  minimum: 0
-                  default: 18446744073709551614
             flush_timeout:
               type: number
               description: Timeout in seconds for flush operations
-              minimum: 0
-              default: 3.0
-
 build:
   build_kit:
     name: rust
