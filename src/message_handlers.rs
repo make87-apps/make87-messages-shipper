@@ -266,6 +266,9 @@ impl MessageHandler for ImageCompressedJpegHandler {
             &rerun::EncodedImage::new(message_decoded.data)
                 .with_media_type(rerun::MediaType::from("image/jpeg")),
         )?;
+        // Immediately flush for raw image data
+        rec.flush_async();
+        println!("  🚀 ImageJPEG flush_async called immediately");
         Ok(())
     }
 }
@@ -326,6 +329,9 @@ impl<'a> ImageFormatHandler for Yuv420Handler<'a> {
                     "  ✅ YUV420 rerun log SUCCESS: {:.3}ms",
                     log_duration.as_secs_f64() * 1000.0
                 );
+                // Immediately flush for raw image data
+                rec.flush_async();
+                println!("  🚀 YUV420 flush_async called immediately");
             }
             Err(e) => {
                 println!("  ❌ YUV420 rerun log FAILED: {}", e);
@@ -420,6 +426,9 @@ impl<'a> ImageFormatHandler for Rgb888Handler<'a> {
                     "  ✅ RGB888 rerun log SUCCESS: {:.3}ms",
                     log_duration.as_secs_f64() * 1000.0
                 );
+                // Immediately flush for raw image data
+                rec.flush_async();
+                println!("  🚀 RGB888 flush_async called immediately");
             }
             Err(e) => {
                 println!("  ❌ RGB888 rerun log FAILED: {}", e);
@@ -498,6 +507,9 @@ impl<'a> ImageFormatHandler for Rgba8888Handler<'a> {
                     "  ✅ RGBA8888 rerun log SUCCESS: {:.3}ms",
                     log_duration.as_secs_f64() * 1000.0
                 );
+                // Immediately flush for raw image data
+                rec.flush_async();
+                println!("  🚀 RGBA8888 flush_async called immediately");
             }
             Err(e) => {
                 println!("  ❌ RGBA8888 rerun log FAILED: {}", e);
@@ -577,6 +589,9 @@ impl<'a> ImageFormatHandler for Nv12Handler<'a> {
                     "  ✅ NV12 rerun log SUCCESS: {:.3}ms",
                     log_duration.as_secs_f64() * 1000.0
                 );
+                // Immediately flush for raw image data
+                rec.flush_async();
+                println!("  🚀 NV12 flush_async called immediately");
             }
             Err(e) => {
                 println!("  ❌ NV12 rerun log FAILED: {}", e);
