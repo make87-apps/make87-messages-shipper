@@ -64,6 +64,8 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                         match rerun_grpc_interface.get_client_recording_stream("rerun-grpc-client")
                         {
                             Ok(new_rec) => {
+                                // Gracefully disconnect the old connection
+                                rec.disconnect();
                                 rec = new_rec;
                                 log::info!("Successfully reconnected to gRPC server");
                             }
@@ -96,6 +98,8 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                         match rerun_grpc_interface.get_client_recording_stream("rerun-grpc-client")
                         {
                             Ok(new_rec) => {
+                                // Gracefully disconnect the old connection
+                                rec.disconnect();
                                 rec = new_rec;
                                 log::info!("Successfully reconnected to gRPC server");
                             }
